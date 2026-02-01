@@ -22,7 +22,10 @@ try:
     with open("data/incidents.json", "r") as f:
         incidents = json.load(f)
         for inc in incidents:
-            st.markdown(f"**{inc['title']}**")
+            st.markdown(f"### {inc['title']}")
             st.write(inc["description"])
+            st.markdown(f"- **Category:** {inc['category']}")
+            st.markdown(f"- **Severity:** {inc['severity']}")
+            st.markdown("---")
 except FileNotFoundError:
     st.info("No incidents logged yet.")
