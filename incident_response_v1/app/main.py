@@ -5,7 +5,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 import json
-
+from utils.llm_engine import generate_incident_explanation
 from utils.storage import save_incident
 from utils.vector_loader import load_vectorstore
 from utils.retriever import retrieve_top_incident
@@ -46,16 +46,19 @@ if query:
 
             if top_doc and score > 0.65:
                 st.success("✅ Similar Incident Found")
-
-                st.markdown("### 📌 Matched Incident Details")
+                # Show retrieved reference (grounding)
+                st.markdown("### 📌 Retrieved Reference Incident")
                 st.markdown(f"**Attack Type:** {top_doc.metadata.get('attack_type', 'Unknown')}")
-                st.markdown(
-                    f"**Incident Title:** {top_doc.metadata.get('incident_title', 'N/A')}"
-                )
-                st.markdown("**Description:**")
-                st.write(top_doc.page_content)
-
+                st.markdown(f"**Incident Title:** {top_doc.metadata.get('incident_title', 'N/A')}")
                 st.caption(f"Similarity Score: {round(score, 3)}")
+
+                #---------- NEW: AI ANALYSIS ----------
+                st.markdown("### 🧠 AI Incident Analysis")
+
+                with st.spinner("Generating explanation using AI..."):
+                    explanation = generate_incident_explanation(query, top_doc)
+
+                st.markdown(explanation)
             else:
                 st.info("ℹ️ No closely matching incident found.")
         except Exception as e:
