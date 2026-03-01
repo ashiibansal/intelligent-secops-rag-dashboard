@@ -2,3 +2,7 @@ venv/
 __pycache__/
 .DS_Store
 .env
+.streamlit/
+incident_vectorstore/
+*.faiss
+*.pkl
