@@ -1,0 +1,455 @@
+[
+  {
+    "Attack Type": "Data Theft",
+    "Incidents": [
+      {
+        "Incident Title": "Data Theft Incident",
+        "Description": "An incident where sensitive, proprietary, or confidential data is accessed and exfiltrated without authorization. This can include identity theft, theft of intellectual property, or unauthorized access to databases and files.",
+        "Containment Steps": [
+          "Identify the system(s) that have been affected (e.g., servers, desktops, laptops, mobile devices)",
+          "Identify user accounts involved",
+          "Determine data that has been compromised",
+          "Disable accounts or revoke access as needed",
+          "Identify and isolate communication paths used for exfiltration",
+          "Apply access controls and containment policies",
+          "Prevent continued data leakage or unauthorized access"
+        ],
+        "Remediation Options": [
+          {
+            "title": "User and Access Control Review",
+            "steps": [
+              "Review affected user permissions",
+              "Reset passwords and enforce MFA",
+              "Limit access to sensitive data on a need-to-know basis"
+            ]
+          },
+          {
+            "title": "System and Network Reconfiguration",
+            "steps": [
+              "Reconfigure network segmentation",
+              "Remove unauthorized data sharing protocols or permissions",
+              "Block external traffic to/from affected systems"
+            ]
+          },
+          {
+            "title": "Patch and Update",
+            "steps": [
+              "Identify exploited vulnerabilities",
+              "Apply patches or software updates to affected systems",
+              "Review patching policies and compliance"
+            ]
+          }
+        ],
+        "Forensic Steps": [
+          "Request packet capture and preserve logs",
+          "Conduct system and file scans for indicators of compromise",
+          "Collect and secure evidence (e.g., affected devices, user logs)",
+          "Analyze unauthorized access patterns and data movement",
+          "Determine root cause and potential internal or external actors"
+        ]
+      }
+    ],
+    "Source": "Data_Theft.pdf"
+  },
+  {
+    "Attack Type": "DDoS",
+    "Incidents": [
+      {
+        "Incident Title": "Distributed Denial of Service Attack",
+        "Description": "An incident where external systems flood organizational network or systems with excessive traffic, making services unavailable to legitimate users.",
+        "Containment Steps": [
+          "Identify the systems targeted and those suffering outages or service degradation",
+          "Determine the IT services being impacted",
+          "Identify type of packets being used in the attack",
+          "Locate network chokepoints and bottlenecks",
+          "Identify and block malicious IP addresses (e.g., blackholing)",
+          "Implement egress filtering or rerouting traffic"
+        ],
+        "Remediation Options": [
+          {
+            "title": "Traffic Filtering",
+            "steps": [
+              "Implement filtering on firewalls and routers",
+              "Work with ISPs to block traffic at the source",
+              "Deploy DDoS mitigation tools or services"
+            ]
+          },
+          {
+            "title": "Infrastructure Hardening",
+            "steps": [
+              "Scale up network capacity",
+              "Implement load balancers or CDNs",
+              "Separate critical services from public networks"
+            ]
+          },
+          {
+            "title": "Vendor and ISP Coordination",
+            "steps": [
+              "Engage ISP for support and rerouting",
+              "Notify third-party providers",
+              "Coordinate with law enforcement if necessary"
+            ]
+          }
+        ],
+        "Forensic Steps": [
+          "Request packet captures and analyze traffic patterns",
+          "Log collection from perimeter and internal devices",
+          "Determine origin of attack and attack vectors",
+          "Assess overall impact on services and users",
+          "Document affected assets and recovery time"
+        ]
+      }
+    ],
+    "Source": "DDoS.pdf"
+  },
+  {
+    "Attack Type": "Elevation of Privilege",
+    "Incidents": [
+      {
+        "Incident Title": "Privilege Escalation Incident",
+        "Description": "An attacker gains unauthorized elevated access to systems or data by exploiting vulnerabilities, often leading to administrative-level control.",
+        "Containment Steps": [
+          "Identify affected systems and user accounts",
+          "Disable or reset elevated accounts",
+          "Block unauthorized access paths or compromised credentials",
+          "Audit access logs for lateral movement",
+          "Apply access restrictions and revoke unnecessary privileges"
+        ],
+        "Remediation Options": [
+          {
+            "title": "Access Review and Hardening",
+            "steps": [
+              "Conduct a full audit of privileged accounts",
+              "Enforce least privilege principles",
+              "Implement access control lists and role-based access"
+            ]
+          },
+          {
+            "title": "Patch Vulnerabilities",
+            "steps": [
+              "Identify and patch exploited vulnerabilities",
+              "Update OS and application software",
+              "Harden configurations of exposed systems"
+            ]
+          },
+          {
+            "title": "Security Monitoring Enhancement",
+            "steps": [
+              "Improve alerts for privilege escalation attempts",
+              "Enable logging for all admin-level actions",
+              "Deploy endpoint detection tools"
+            ]
+          }
+        ],
+        "Forensic Steps": [
+          "Collect authentication and access logs",
+          "Capture memory and system state of compromised hosts",
+          "Analyze unauthorized privilege escalation events",
+          "Correlate changes with timestamps and user activities",
+          "Document escalation path and exploited mechanisms"
+        ]
+      }
+    ],
+    "Source": "Elevation-of-Privilege.pdf"
+  },
+  {
+    "Attack Type": "Improper Computer Usage",
+    "Incidents": [
+      {
+        "Incident Title": "Policy Violation or Misuse Incident",
+        "Description": "Incidents involving employees or users misusing organizational computing resources, often leading to security exposure, policy violations, or malware infections.",
+        "Containment Steps": [
+          "Identify affected systems and users involved",
+          "Isolate systems exhibiting signs of misuse",
+          "Block unauthorized websites or applications",
+          "Disable suspicious user accounts if needed",
+          "Initiate HR or disciplinary follow-up where applicable"
+        ],
+        "Remediation Options": [
+          {
+            "title": "User Awareness and Policy Enforcement",
+            "steps": [
+              "Conduct security awareness training",
+              "Reinforce acceptable use policies",
+              "Require acknowledgment of updated policies"
+            ]
+          },
+          {
+            "title": "Network and System Controls",
+            "steps": [
+              "Implement web filtering and monitoring",
+              "Deploy endpoint protection against spyware/malware",
+              "Restrict access to high-risk protocols and ports"
+            ]
+          },
+          {
+            "title": "Security Configuration Updates",
+            "steps": [
+              "Harden browser and system configurations",
+              "Disable unauthorized software or services",
+              "Update AV/EDR signatures and scan endpoints"
+            ]
+          }
+        ],
+        "Forensic Steps": [
+          "Collect logs and records of usage violations",
+          "Analyze web and email traffic",
+          "Inspect systems for malware, adware, or spyware",
+          "Document affected systems and data",
+          "Correlate user behavior with technical indicators"
+        ]
+      }
+    ],
+    "Source": "ImproperComputerUsage.pdf"
+  },
+  {
+    "Attack Type": "Malware Outbreak",
+    "Incidents": [
+      {
+        "Incident Title": "Malware Infection Incident",
+        "Description": "An incident where malware spreads across multiple systems, potentially disrupting business operations, compromising data, or opening backdoors.",
+        "Containment Steps": [
+          "Identify infected systems and isolate them from the network",
+          "Terminate malicious processes and services",
+          "Prevent malware communication by blocking known C2 servers",
+          "Disable file-sharing or USB access if exploited",
+          "Initiate antivirus/malware removal procedures"
+        ],
+        "Remediation Options": [
+          {
+            "title": "Malware Eradication",
+            "steps": [
+              "Run antivirus and anti-malware scans",
+              "Remove malicious files and registry entries",
+              "Reimage severely affected systems"
+            ]
+          },
+          {
+            "title": "Patch Management",
+            "steps": [
+              "Identify and patch exploited vulnerabilities",
+              "Review and update security configurations",
+              "Enforce secure boot and application controls"
+            ]
+          },
+          {
+            "title": "Backup and Restore",
+            "steps": [
+              "Verify backup integrity",
+              "Restore clean backups of critical systems",
+              "Ensure malware is not present in restored files"
+            ]
+          }
+        ],
+        "Forensic Steps": [
+          "Capture memory and file system snapshots",
+          "Analyze malware samples and behaviors",
+          "Review system and AV logs",
+          "Identify malware origin and propagation path",
+          "Report IoCs for external sharing and blacklisting"
+        ]
+      }
+    ],
+    "Source": "Malware_Outbreak.pdf"
+  },
+  {
+    "Attack Type": "Phishing",
+    "Incidents": [
+      {
+        "Incident Title": "Email Phishing Attack",
+        "Description": "A social engineering attack using fraudulent emails designed to trick recipients into disclosing credentials, clicking malicious links, or downloading malware.",
+        "Containment Steps": [
+          "Identify users who received or interacted with phishing emails",
+          "Disable affected user accounts and reset passwords",
+          "Block malicious domains, URLs, or sender addresses",
+          "Scan systems for malware or credential theft tools",
+          "Notify users and issue advisories"
+        ],
+        "Remediation Options": [
+          {
+            "title": "User Credential Security",
+            "steps": [
+              "Force password changes for affected users",
+              "Implement multi-factor authentication",
+              "Audit and disable unused user accounts"
+            ]
+          },
+          {
+            "title": "Email and Domain Protection",
+            "steps": [
+              "Enable SPF, DKIM, and DMARC email controls",
+              "Block known phishing domains and IPs",
+              "Update email filtering rules"
+            ]
+          },
+          {
+            "title": "Security Awareness Training",
+            "steps": [
+              "Conduct anti-phishing training",
+              "Simulate phishing emails to test users",
+              "Distribute guidance on identifying suspicious emails"
+            ]
+          }
+        ],
+        "Forensic Steps": [
+          "Collect email headers and metadata",
+          "Analyze logs for user click-through and email delivery",
+          "Examine endpoints for post-click activity",
+          "Identify phishing infrastructure or hosting",
+          "Coordinate with ISP or law enforcement if necessary"
+        ]
+      }
+    ],
+    "Source": "Phishing.pdf"
+  },
+  {
+    "Attack Type": "Root Access",
+    "Incidents": [
+      {
+        "Incident Title": "Unauthorized Root Access",
+        "Description": "An attacker gains root or administrative privileges on a system, granting full control and the ability to bypass all protections.",
+        "Containment Steps": [
+          "Identify systems and accounts with unauthorized root access",
+          "Terminate unauthorized sessions",
+          "Disable affected accounts and reset credentials",
+          "Isolate compromised hosts from the network",
+          "Audit privilege escalation methods used"
+        ],
+        "Remediation Options": [
+          {
+            "title": "Access Revocation",
+            "steps": [
+              "Revoke root access for non-essential accounts",
+              "Reset root passwords and credentials",
+              "Implement centralized privilege management"
+            ]
+          },
+          {
+            "title": "System Hardening",
+            "steps": [
+              "Disable unused services and ports",
+              "Apply security patches and kernel updates",
+              "Limit root login via SSH or console"
+            ]
+          },
+          {
+            "title": "Monitoring and Alerting",
+            "steps": [
+              "Enable auditing for root commands and sessions",
+              "Deploy privilege escalation detection tools",
+              "Configure alerts for unauthorized access attempts"
+            ]
+          }
+        ],
+        "Forensic Steps": [
+          "Collect logs and session histories",
+          "Capture and analyze system snapshots",
+          "Investigate privilege escalation vectors",
+          "Determine scope of access and lateral movement",
+          "Preserve forensic artifacts for legal review"
+        ]
+      }
+    ],
+    "Source": "Root-Access.pdf"
+  },
+  {
+    "Attack Type": "Unauthorized Access",
+    "Incidents": [
+      {
+        "Incident Title": "Unauthorized System Access",
+        "Description": "Unauthorized access to systems or data by internal or external actors through stolen credentials, system vulnerabilities, or social engineering.",
+        "Containment Steps": [
+          "Identify affected systems and user accounts",
+          "Revoke or disable access for unauthorized users",
+          "Block access paths such as VPN or remote tools",
+          "Quarantine compromised endpoints",
+          "Monitor for further unauthorized attempts"
+        ],
+        "Remediation Options": [
+          {
+            "title": "Credential and Access Audit",
+            "steps": [
+              "Reset compromised accounts",
+              "Implement MFA for all privileged accounts",
+              "Conduct access review and remove excessive permissions"
+            ]
+          },
+          {
+            "title": "Patch Vulnerabilities",
+            "steps": [
+              "Identify and remediate exploited system weaknesses",
+              "Deploy endpoint protection tools",
+              "Ensure all systems are up-to-date"
+            ]
+          },
+          {
+            "title": "Security Policy Enforcement",
+            "steps": [
+              "Review and update access control policies",
+              "Educate employees on secure access practices",
+              "Implement zero-trust network segmentation"
+            ]
+          }
+        ],
+        "Forensic Steps": [
+          "Analyze logs for access anomalies and patterns",
+          "Review failed login attempts and authentication logs",
+          "Preserve system images and memory for analysis",
+          "Determine attack vector and data accessed",
+          "Document user behavior and timeline of events"
+        ]
+      }
+    ],
+    "Source": "UnauthAccess.pdf"
+  },
+  {
+    "Attack Type": "Virus Outbreak",
+    "Incidents": [
+      {
+        "Incident Title": "Widespread Virus Infection",
+        "Description": "A rapid and uncontrolled spread of computer virus across systems in the organization, potentially disrupting operations and compromising data integrity.",
+        "Containment Steps": [
+          "Identify and isolate infected systems",
+          "Disable network access for affected devices",
+          "Stop virus propagation by disabling shared drives",
+          "Apply emergency antivirus definitions",
+          "Notify IT teams and escalate response"
+        ],
+        "Remediation Options": [
+          {
+            "title": "Virus Removal",
+            "steps": [
+              "Scan and clean infected systems",
+              "Reinstall compromised applications",
+              "Reimage systems when necessary"
+            ]
+          },
+          {
+            "title": "Patch and Update",
+            "steps": [
+              "Ensure antivirus software is current",
+              "Patch OS and vulnerable applications",
+              "Restrict executable permissions"
+            ]
+          },
+          {
+            "title": "Backup and Restore",
+            "steps": [
+              "Validate backups for integrity",
+              "Restore clean data and system images",
+              "Scan backups for hidden infections"
+            ]
+          }
+        ],
+        "Forensic Steps": [
+          "Collect logs and samples of virus payload",
+          "Analyze propagation mechanisms",
+          "Track patient zero and timeline of infection",
+          "Identify root cause of infection vector",
+          "Preserve evidence for follow-up investigation"
+        ]
+      }
+    ],
+    "Source": "Virus-Outbreak.pdf"
+  }
+]
