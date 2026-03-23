@@ -1,0 +1,18 @@
+{
+  "binary_classification": {
+    "train_accuracy": 1.0,
+    "test_accuracy": 1.0,
+    "test_f1_score": 1.0,
+    "model_name": "Random Forest"
+  },
+  "multiclass_classification": {
+    "test_accuracy": 0.7983333333333333,
+    "test_f1_score": 0.804122076073582,
+    "model_name": "Random Forest",
+    "classes": [
+      "Benign",
+      "DoS",
+      "FTP-BruteForce"
+    ]
+  }
+}
