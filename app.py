@@ -17,23 +17,36 @@ import pandas as pd
 import boto3
 
 
+# ============================================================
+# UNIFIED UI HELPERS
+# ============================================================
+
+from ui_components import (
+    inject_unified_ui_css,
+    render_top_header,
+    render_summary_cards,
+    render_workflow_status,
+    render_sidebar_context,
+)
+
+
+# ============================================================
+# CORE LLM HELPERS
+# ============================================================
+
 def gemini_markdown_summary(prompt):
     try:
-        # Track API calls
         if 'api_calls_today' not in st.session_state:
             st.session_state.api_calls_today = 0
 
-        # Check quota before making call
-        if st.session_state.api_calls_today >= 45:  # Leave buffer
+        if st.session_state.api_calls_today >= 45:
             return "⚠️ **API Quota Warning**: Approaching daily limit. Please upgrade your plan or try again tomorrow."
 
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(prompt)
-
-        # Increment call counter
         st.session_state.api_calls_today += 1
-
         return response.text.strip()
+
     except Exception as e:
         if "quota" in str(e).lower() or "429" in str(e):
             return "⚠️ **API Quota Exceeded**: You've reached your daily limit for Gemini API requests. Please try again tomorrow or upgrade your plan."
@@ -43,37 +56,27 @@ def gemini_markdown_summary(prompt):
             return f"⚠️ **API Error**: Unable to generate response. Error: {str(e)[:100]}..."
 
 
-# Gemini API
+# ============================================================
+# GEMINI API
+# ============================================================
+
 try:
     api_key = st.secrets["GEMINI"]["API_KEY"]
     if api_key and api_key != "your-gemini-api-key-here":
         genai.configure(api_key=api_key)
-        # Test the API key with a simple call
         model = genai.GenerativeModel("gemini-2.5-flash")
-        test_response = model.generate_content("Hello")
+        model.generate_content("Hello")
         api_connected = True
-        st.sidebar.success("✅ Gemini API: Connected and Working")
     else:
         api_connected = False
-        st.sidebar.error("❌ Gemini API: Invalid API Key")
-except Exception as e:
+except Exception:
     api_connected = False
-    st.sidebar.error(f"❌ Gemini API: Error - {str(e)[:50]}...")
 
 
-# Sidebar API status
-with st.sidebar:
-    st.markdown("## API Status")
-    if api_connected:
-        # Add quota monitoring
-        if 'api_calls_today' not in st.session_state:
-            st.session_state.api_calls_today = 0
-        st.info(f"API Calls Today: {st.session_state.api_calls_today}/50 (Free Tier)")
+# ============================================================
+# LOAD DATA
+# ============================================================
 
-st.title("🛡️ Smart Cybersecurity Assistant")
-
-
-# Load data
 @st.cache_data
 def load_incident_data():
     with open("data.json", "r") as f:
@@ -82,13 +85,67 @@ def load_incident_data():
 
 data = load_incident_data()
 
-# Session state
+
+# ============================================================
+# SESSION STATE
+# ============================================================
+
 if 'incident' not in st.session_state:
     st.session_state.incident = None
 if 'top_doc' not in st.session_state:
     st.session_state.top_doc = None
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+if 'incident_summary' not in st.session_state:
+    st.session_state.incident_summary = None
+if 'incident_metadata' not in st.session_state:
+    st.session_state.incident_metadata = {}
+if 'incident_query' not in st.session_state:
+    st.session_state.incident_query = None
+if 'incident_chat_messages' not in st.session_state:
+    st.session_state.incident_chat_messages = []
+if 'uploaded_logs' not in st.session_state:
+    st.session_state.uploaded_logs = None
+if 'api_calls_today' not in st.session_state:
+    st.session_state.api_calls_today = 0
+
+
+# ============================================================
+# GLOBAL UI
+# ============================================================
+
+inject_unified_ui_css()
+
+render_top_header(
+    title="🛡️ Unified Cybersecurity Platform",
+    subtitle="Incident response, threat triage, attack analytics, and detection workflows in one operational surface.",
+    chips=[
+        "Gemini Assisted",
+        "RAG Incident Search",
+        "Threat Analytics",
+        "Security Agent Ready"
+    ]
+)
+
+
+# ============================================================
+# SIDEBAR CONTEXT
+# ============================================================
+
+render_sidebar_context("Platform Status", {
+    "Gemini API": "Connected" if api_connected else "Unavailable",
+    "API Calls Today": f"{st.session_state.get('api_calls_today', 0)}/50",
+    "Incident Summary": "Ready" if st.session_state.get("incident_summary") else "Not generated",
+    "Uploaded CSV": "Present" if st.session_state.get("uploaded_logs") is not None else "None",
+})
+
+render_sidebar_context("Current Context", {
+    "Incident Query": st.session_state.get("incident_query", "N/A"),
+    "Chat Messages": len(st.session_state.get("incident_chat_messages", [])),
+    "Incident Library": len(data) if data else 0,
+    "Legacy Analytics": "Enabled",
+})
+
 
 # ============================================================
 # MAIN APPLICATION TABS
@@ -98,11 +155,60 @@ main_tab1, main_tab2 = st.tabs(
     ["🤖 Incident Response System", "🛡️ Detection & Security Agent"]
 )
 
+
 # ============================================================
 # INCIDENT RESPONSE SYSTEM
 # ============================================================
 
 with main_tab1:
+    incident_count = len(data) if data else 0
+    has_summary = bool(st.session_state.get("incident_summary"))
+    uploaded_csv = "Yes" if st.session_state.get("uploaded_logs") is not None else "No"
+
+    render_summary_cards([
+        {
+            "label": "Incident Library",
+            "value": f"{incident_count}",
+            "subtext": "Known incident playbooks available"
+        },
+        {
+            "label": "Analysis State",
+            "value": "Active" if has_summary else "Ready",
+            "subtext": "Current incident response workflow status"
+        },
+        {
+            "label": "CSV Analytics",
+            "value": uploaded_csv,
+            "subtext": "Attack CSV loaded for downstream analytics"
+        },
+        {
+            "label": "Assistant Mode",
+            "value": "Enabled" if api_connected else "Limited",
+            "subtext": "Interactive cybersecurity guidance availability"
+        },
+    ])
+
+    incident_steps = [
+        "Describe / Select Incident",
+        "Generate Summary",
+        "Review Actions",
+        "Ask Assistant",
+        "Export / Escalate"
+    ]
+
+    incident_current_step = 0
+    if st.session_state.get("incident_query") or st.session_state.get("uploaded_logs") is not None:
+        incident_current_step = 1
+    if st.session_state.get("incident_summary"):
+        incident_current_step = 2
+    if st.session_state.get("incident_chat_messages"):
+        incident_current_step = 3
+
+    render_workflow_status(
+        title="Incident Response Workflow",
+        steps=incident_steps,
+        current_step=incident_current_step
+    )
 
     TABS = ["General Purpose Use", "Ticket Raised Post Identification", "Legacy Analytics"]
     tab1, tab2, tab3 = st.tabs(TABS)
@@ -111,8 +217,9 @@ with main_tab1:
     # TAB 1: GENERAL PURPOSE USE
     # --------------------------------------------------------
     with tab1:
-        st.header("General Purpose Use")
-        st.markdown("Describe what you noticed (e.g., fake pop-up, slow system, unknown device on Wi-Fi):")
+        st.markdown('<div class="section-shell">', unsafe_allow_html=True)
+        st.subheader("General Purpose Use")
+        st.markdown("Describe what you noticed, such as a fake pop-up, a slow system, or an unknown device on Wi-Fi.")
         query = st.text_input("Incident Description:", key="general_query")
 
         if query:
@@ -126,9 +233,6 @@ with main_tab1:
 
                 metadata = top_doc.metadata
                 attack_type = metadata.get("attack_type", "Unknown")
-                containment = metadata.get("containment", "")
-                remediation = metadata.get("remediation", "")
-                forensic = metadata.get("forensic", "")
 
                 gemini_prompt = f"""
 You are a cybersecurity incident response assistant.
@@ -176,7 +280,6 @@ IMPORTANT FORMATTING RULES:
                 st.markdown("### 📋 Gemini Incident Summary")
                 st.markdown(summary)
 
-                # Save all analysis and summary to session state
                 st.session_state.incident = {
                     "query": query,
                     "content": summary,
@@ -188,24 +291,34 @@ IMPORTANT FORMATTING RULES:
 
             else:
                 st.warning("❗ No relevant incident could be identified. Please describe the issue in more technical or detailed terms.")
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # --------------------------------------------------------
     # TAB 2: TICKET RAISED POST IDENTIFICATION
     # --------------------------------------------------------
     with tab2:
-        st.header("Ticket Raised Post Identification")
-        st.markdown("Select from a list of known attacks to view actions, or upload a network attack CSV for analysis.")
+        st.markdown('<div class="section-shell">', unsafe_allow_html=True)
+        st.subheader("Ticket Raised Post Identification")
+        st.markdown("Select from known incidents or upload a network attack CSV for playbook generation and analytics.")
 
-        # File uploader for network attack CSV
-        uploaded_file = st.file_uploader("Upload a network attack CSV for analysis", type=["csv"], key="ticket_csv")
-        csv_summary = None
+        uploaded_file = st.file_uploader(
+            "Upload a network attack CSV for analysis",
+            type=["csv"],
+            key="ticket_csv"
+        )
         attack_summary_str = ""
 
         if uploaded_file:
             df = pd.read_csv(uploaded_file)
-
-            # Save uploaded logs globally for dashboard
             st.session_state.uploaded_logs = df
+
+            preview_cols = st.columns(3)
+            with preview_cols[0]:
+                st.metric("Rows Uploaded", len(df))
+            with preview_cols[1]:
+                st.metric("Columns Detected", len(df.columns))
+            with preview_cols[2]:
+                st.metric("Analysis Mode", "CSV Triage")
 
             attack_summary = df.groupby('Attack_Type').agg({
                 'Dst_Port': lambda x: list(set(x)),
@@ -217,19 +330,16 @@ IMPORTANT FORMATTING RULES:
                 for _, row in attack_summary.iterrows()
             ])
 
-            st.write("Detected attack types and ports:")
-            st.dataframe(attack_summary)
+            st.markdown("### 🧾 Detected attack types and ports")
+            st.dataframe(attack_summary, use_container_width=True)
 
-            # Automatically provide tailored summary for uploaded CSV
             if attack_summary_str:
                 matching_incidents = []
                 similar_incidents = []
 
                 for attack_type in attack_summary['Attack_Type']:
-                    found_exact_match = False
                     for attack in data:
                         if attack["Attack Type"].lower() == attack_type.lower():
-                            found_exact_match = True
                             for incident in attack["Incidents"]:
                                 matching_incidents.append({
                                     "Attack Type": attack["Attack Type"],
@@ -239,9 +349,10 @@ IMPORTANT FORMATTING RULES:
                                     "Remediation Options": incident["Remediation Options"],
                                     "Forensic Steps": incident["Forensic Steps"]
                                 })
-
-                        elif (attack_type.lower() in attack["Attack Type"].lower() or
-                              attack["Attack Type"].lower() in attack_type.lower()):
+                        elif (
+                            attack_type.lower() in attack["Attack Type"].lower()
+                            or attack["Attack Type"].lower() in attack_type.lower()
+                        ):
                             for incident in attack["Incidents"]:
                                 similar_incidents.append({
                                     "Attack Type": attack["Attack Type"],
@@ -255,46 +366,13 @@ IMPORTANT FORMATTING RULES:
                 all_relevant_incidents = matching_incidents + similar_incidents
 
                 if all_relevant_incidents:
-                    matching_incidents = []
-                    similar_incidents = []
+                    attack_types_found = list(set([incident['Attack Type'] for incident in all_relevant_incidents]))
+                    ports_found = []
+                    for _, row in attack_summary.iterrows():
+                        ports_found.extend(row['Dst_Port'])
+                    ports_found = list(set(ports_found))
 
-                    for attack_type in attack_summary['Attack_Type']:
-                        found_exact_match = False
-                        for attack in data:
-                            if attack["Attack Type"].lower() == attack_type.lower():
-                                found_exact_match = True
-                                for incident in attack["Incidents"]:
-                                    matching_incidents.append({
-                                        "Attack Type": attack["Attack Type"],
-                                        "Incident Title": incident["Incident Title"],
-                                        "Description": incident["Description"],
-                                        "Containment Steps": incident["Containment Steps"],
-                                        "Remediation Options": incident["Remediation Options"],
-                                        "Forensic Steps": incident["Forensic Steps"]
-                                    })
-
-                            elif (attack_type.lower() in attack["Attack Type"].lower() or
-                                  attack["Attack Type"].lower() in attack_type.lower()):
-                                for incident in attack["Incidents"]:
-                                    similar_incidents.append({
-                                        "Attack Type": attack["Attack Type"],
-                                        "Incident Title": incident["Incident Title"],
-                                        "Description": incident["Description"],
-                                        "Containment Steps": incident["Containment Steps"],
-                                        "Remediation Options": incident["Remediation Options"],
-                                        "Forensic Steps": incident["Forensic Steps"]
-                                    })
-
-                    all_relevant_incidents = matching_incidents + similar_incidents
-
-                    if all_relevant_incidents:
-                        attack_types_found = list(set([incident['Attack Type'] for incident in all_relevant_incidents]))
-                        ports_found = []
-                        for _, row in attack_summary.iterrows():
-                            ports_found.extend(row['Dst_Port'])
-                        ports_found = list(set(ports_found))
-
-                        detailed_prompt = f"""
+                    detailed_prompt = f"""
 You are a cybersecurity assistant. Analyze these detected network attacks and provide comprehensive recommendations.
 
 DETECTED ATTACKS:
@@ -306,8 +384,8 @@ PORTS INVOLVED: {', '.join(map(str, ports_found))}
 RELEVANT INCIDENT PLAYBOOKS:
 """
 
-                        for incident in all_relevant_incidents:
-                            detailed_prompt += f"""
+                    for incident in all_relevant_incidents:
+                        detailed_prompt += f"""
 **{incident['Attack Type']} - {incident['Incident Title']}**
 Description: {incident['Description']}
 Containment: {incident['Containment Steps']}
@@ -315,7 +393,7 @@ Remediation: {incident['Remediation Options']}
 Forensic: {incident['Forensic Steps']}
 """
 
-                        detailed_prompt += f"""
+                    detailed_prompt += """
 
 Create a CLEAR, ACTIONABLE INCIDENT RESPONSE PLAN.
 
@@ -343,24 +421,24 @@ RESPONSE FORMAT RULES:
 • Use emojis in section headers
 """
 
-                        with st.status("🧠 Analyzing attacks with playbook data...", expanded=True) as status:
-                            summary = gemini_markdown_summary(detailed_prompt)
-                            status.update(label="✅ Analysis complete!", state="complete")
+                    with st.status("🧠 Analyzing attacks with playbook data...", expanded=True) as status:
+                        summary = gemini_markdown_summary(detailed_prompt)
+                        status.update(label="✅ Analysis complete!", state="complete")
 
-                        st.markdown("### 🧾 Tailored Fix Summary")
-                        st.markdown(summary)
+                    st.markdown("### 🧾 Tailored Fix Summary")
+                    st.markdown(summary)
 
-                        st.session_state.incident = {
-                            "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}",
-                            "content": summary,
-                            "metadata": {"attack_types": attack_summary['Attack_Type'].tolist()}
-                        }
-                        st.session_state.incident_summary = summary
-                        st.session_state.incident_metadata = {"uploaded_csv": True}
-                        st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}"
+                    st.session_state.incident = {
+                        "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}",
+                        "content": summary,
+                        "metadata": {"attack_types": attack_summary['Attack_Type'].tolist()}
+                    }
+                    st.session_state.incident_summary = summary
+                    st.session_state.incident_metadata = {"uploaded_csv": True}
+                    st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}"
 
-                    else:
-                        detailed_prompt = f"""
+                else:
+                    detailed_prompt = f"""
 You are a cybersecurity incident response assistant.
 
 Analyze this detected network attack data:
@@ -388,35 +466,35 @@ RESPONSE FORMAT RULES:
 • Use emojis in headers
 """
 
-                        with st.status("🧠 Generating comprehensive recommendations...", expanded=True) as status:
-                            summary = gemini_markdown_summary(detailed_prompt)
-                            status.update(label="✅ Recommendations ready!", state="complete")
+                    with st.status("🧠 Generating comprehensive recommendations...", expanded=True) as status:
+                        summary = gemini_markdown_summary(detailed_prompt)
+                        status.update(label="✅ Recommendations ready!", state="complete")
 
-                        st.markdown("### 🧾 Generated Fix Summary")
-                        st.markdown(summary)
+                    st.markdown("### 🧾 Generated Fix Summary")
+                    st.markdown(summary)
 
-                        st.session_state.incident = {
-                            "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}",
-                            "content": summary,
-                            "metadata": {"attack_types": attack_summary['Attack_Type'].tolist()}
-                        }
-                        st.session_state.incident_summary = summary
-                        st.session_state.incident_metadata = {"uploaded_csv": True}
-                        st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}"
+                    st.session_state.incident = {
+                        "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}",
+                        "content": summary,
+                        "metadata": {"attack_types": attack_summary['Attack_Type'].tolist()}
+                    }
+                    st.session_state.incident_summary = summary
+                    st.session_state.incident_metadata = {"uploaded_csv": True}
+                    st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}"
 
-                        st.markdown("---")
-                        st.markdown("### 🛠️ Apply Containment Fix")
-                        if st.button("🚨 Apply Fix (Stop EC2 Instance)", key="apply_fix_csv_no_match", type="primary"):
-                            success, message, state = apply_containment_fix()
-                            if success:
-                                st.success(message)
-                                st.info("📋 Ticket raised for remediation by Level 2 Engineer")
-                                st.markdown("**Containment Actions Applied:**")
-                                st.markdown("- ✅ Isolated affected EC2 instance")
-                                st.markdown("- ✅ Stopped malicious traffic")
-                                st.markdown("- ✅ Preserved evidence for forensics")
-                            else:
-                                st.error(message)
+                    st.markdown("---")
+                    st.markdown("### 🛠️ Apply Containment Fix")
+                    if st.button("🚨 Apply Fix (Stop EC2 Instance)", key="apply_fix_csv_no_match", type="primary"):
+                        success, message, state = apply_containment_fix()
+                        if success:
+                            st.success(message)
+                            st.info("📋 Ticket raised for remediation by Level 2 Engineer")
+                            st.markdown("**Containment Actions Applied:**")
+                            st.markdown("- ✅ Isolated affected EC2 instance")
+                            st.markdown("- ✅ Stopped malicious traffic")
+                            st.markdown("- ✅ Preserved evidence for forensics")
+                        else:
+                            st.error(message)
 
         if not uploaded_file:
             st.markdown("---")
@@ -467,29 +545,26 @@ FORMATTING RULES:
 • Make steps easy for security teams to execute
 """
 
-            with st.container():
-                if st.button("Generate Summary", key="generate_summary_btn"):
-                    with st.status("🧠 Generating comprehensive summary...", expanded=True) as status:
-                        summary = gemini_markdown_summary(prompt)
-                        status.update(label="✅ Summary generated!", state="complete")
-                    st.markdown("### 🧾 Fix Summary")
-                    st.markdown(summary)
+            if st.button("Generate Summary", key="generate_summary_btn"):
+                with st.status("🧠 Generating comprehensive summary...", expanded=True) as status:
+                    summary = gemini_markdown_summary(prompt)
+                    status.update(label="✅ Summary generated!", state="complete")
 
-                    st.session_state.incident = {
-                        "query": selected_incident["Incident Title"],
-                        "content": summary,
-                        "metadata": {}
-                    }
-                    st.session_state.incident_summary = summary
-                    st.session_state.incident_metadata = selected_incident
-                    st.session_state.incident_query = selected_incident["Incident Title"]
+                st.markdown("### 🧾 Fix Summary")
+                st.markdown(summary)
 
-        if 'incident_summary' in st.session_state and st.session_state.incident_summary:
+                st.session_state.incident = {
+                    "query": selected_incident["Incident Title"],
+                    "content": summary,
+                    "metadata": {}
+                }
+                st.session_state.incident_summary = summary
+                st.session_state.incident_metadata = selected_incident
+                st.session_state.incident_query = selected_incident["Incident Title"]
+
+        if st.session_state.get('incident_summary'):
             st.markdown("---")
             st.markdown("## 🤖 Cybersecurity Assistant")
-
-            if "incident_chat_messages" not in st.session_state:
-                st.session_state.incident_chat_messages = []
 
             analysis_context = f"""
             Incident Analysis Summary:
@@ -558,17 +633,6 @@ FORMATTING RULES:
                 border-radius: 20px;
                 border: 1px solid #e4e6ea;
             }
-            .send-button {
-                position: absolute;
-                right: 8px;
-                top: 50%;
-                transform: translateY(-50%);
-                background: none;
-                border: none;
-                color: #0084ff;
-                cursor: pointer;
-                font-size: 18px;
-            }
             </style>
             """, unsafe_allow_html=True)
 
@@ -584,16 +648,20 @@ FORMATTING RULES:
 
             for message in st.session_state.incident_chat_messages:
                 if message["role"] == "user":
-                    st.markdown(f'<div class="user-bubble">🧑 <strong>You:</strong><br>{message["content"]}</div><div class="clearfix"></div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="user-bubble">🧑 <strong>You:</strong><br>{message["content"]}</div><div class="clearfix"></div>',
+                        unsafe_allow_html=True
+                    )
                 else:
-                    st.markdown(f'<div class="bot-bubble">🤖 <strong>Assistant:</strong><br>{message["content"]}</div><div class="clearfix"></div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="bot-bubble">🤖 <strong>Assistant:</strong><br>{message["content"]}</div><div class="clearfix"></div>',
+                        unsafe_allow_html=True
+                    )
 
             st.markdown('</div>', unsafe_allow_html=True)
-
             st.markdown('<div class="chat-input-container">', unsafe_allow_html=True)
 
             col1, col2 = st.columns([5, 1])
-
             with col1:
                 with st.form(key="incident_chat_form", clear_on_submit=True):
                     user_input = st.text_input("Message", placeholder="Ask about cybersecurity...", label_visibility="collapsed")
@@ -652,12 +720,14 @@ FORMATTING RULES:
                     st.session_state.incident_chat_messages = st.session_state.incident_chat_messages[-20:]
 
                 st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # --------------------------------------------------------
     # TAB 3: LEGACY ANALYTICS
     # --------------------------------------------------------
     with tab3:
-        st.header("Legacy Analytics")
+        st.markdown('<div class="section-shell">', unsafe_allow_html=True)
+        st.subheader("Legacy Analytics")
         st.markdown("Quick visualisation of uploaded network-attack CSVs from the ticket workflow.")
 
         if "uploaded_logs" in st.session_state and st.session_state.uploaded_logs is not None:
@@ -665,6 +735,8 @@ FORMATTING RULES:
             render_dashboard(st.session_state.uploaded_logs)
         else:
             st.info("Upload a network attack CSV in 'Ticket Raised Post Identification' to view analytics here.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
 
 # ============================================================
 # SECURITY AGENT TAB
