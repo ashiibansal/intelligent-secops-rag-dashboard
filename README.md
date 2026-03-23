@@ -98,6 +98,7 @@ If Gemini is configured, the Security Agent also provides a built-in assistant f
     ├── trained_models/
     └── login_models/
 
+```
 ### Where credentials are referenced
 - `app.py`
   - Reads Gemini API key from `st.secrets["GEMINI"]["API_KEY"]` and configures `google.generativeai`.
@@ -120,8 +121,8 @@ API_KEY = "your-gemini-api-key-here"
 ACCESS_KEY_ID = "your-aws-access-key-here"
 SECRET_ACCESS_KEY = "your-aws-secret-key-here"
 REGION = "ap-south-1"
-```
 
+```
 Notes:
 - Gemini is required for generation and embeddings.
 - AWS is optional; if not provided, the EC2 containment action runs in demo mode and does not call AWS.
