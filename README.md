@@ -1,6 +1,102 @@
 ## Smart Cybersecurity Assistant – Credential Setup
 
+A Streamlit-based cybersecurity platform that combines:
+
+- **Incident response guidance** using RAG + Gemini
+- **Known-attack playbook generation**
+- **Legacy attack analytics dashboard** for uploaded CSVs
+- **Security Agent Console** for:
+  - network anomaly detection
+  - attack type classification
+  - login anomaly detection
+  - interactive visual analytics
+  - exportable results
+
 This project uses Google Gemini for generation and embeddings, and optionally AWS (EC2) for a demo containment action. No real credentials are included in this repo; placeholders are used.
+___
+
+## Features
+
+### 1. Incident Response System
+Supports two workflows:
+
+#### General Purpose Use
+Describe suspicious activity in plain language, such as:
+- fake pop-up
+- unusually slow device
+- suspicious Wi-Fi device
+- unknown login behaviour
+
+The system uses:
+- vector similarity search
+- Gemini-based summarisation
+- structured incident-response formatting
+
+#### Ticket Raised Post Identification
+Choose a known incident or upload a network attack CSV to:
+- identify relevant attack patterns
+- generate containment actions
+- generate remediation steps
+- generate forensic investigation steps
+
+---
+
+### 2. Legacy Analytics Dashboard
+Inside the Incident Response tab, the **Legacy Analytics** subtab provides:
+- attack type distribution
+- risk-level distribution
+- destination-port analysis
+- source-IP analysis
+- attack timeline
+- heatmaps
+- prioritised review tables
+- downloadable filtered outputs
+
+This dashboard uses the uploaded CSV from the ticket workflow.
+
+---
+
+### 3. Security Agent Console
+The Security Agent tab supports automatic file classification and model-based detection.
+
+#### Supported modes
+- **Network traffic analysis**
+  - anomaly detection
+  - attack classification
+  - confidence visualisation
+  - export to CSV / JSON
+
+- **Login anomaly detection**
+  - suspicious login pattern analysis
+  - affected-user analysis
+  - temporal anomaly charts
+  - anomaly export
+
+#### AI assistant
+If Gemini is configured, the Security Agent also provides a built-in assistant for analysis-specific questions.
+
+---
+
+## Project Structure
+
+```text
+.
+├── app.py
+├── dashboard.py
+├── ui_components.py
+├── rag_answerer.py
+├── vector_loader.py
+├── data.json
+├── README.md
+├── requirements.txt
+├── .streamlit/
+│   └── secrets.toml
+└── security_agent/
+    ├── __init__.py
+    ├── security_agent_page.py
+    ├── model_inference.py
+    ├── trained_models/
+    └── login_models/
 
 ### Where credentials are referenced
 - `app.py`
