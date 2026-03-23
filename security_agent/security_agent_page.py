@@ -69,7 +69,6 @@ try:
 except ImportError:
     NETWORK_MODELS_AVAILABLE = False
 
-
 # ============================================================
 # UNIFIED UI HELPERS
 # ============================================================
@@ -82,10 +81,8 @@ from ui_components import (
     render_sidebar_context,
 )
 
-
 # Inject CSS immediately so imported rendering still looks correct
 inject_unified_ui_css()
-
 
 # ============================================================
 # MODEL / DATA HELPERS
@@ -322,9 +319,35 @@ def classify_file_type(df: pd.DataFrame, filename: str) -> str:
 
     if total_network_score > total_login_score:
         return "network"
-    elif total_login_score > total_network_score:
+    elif total_login_score > total_login_score:
         return "login"
     return "unknown"
+
+
+def normalize_network_export_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize common network column aliases so downstream dashboards
+    can rely on a consistent schema.
+    """
+    df = df.copy()
+
+    rename_map = {}
+    for col in df.columns:
+        clean = str(col).strip().lower()
+
+        if clean in ["dst port", "dst_port", "destination_port", "destination port"]:
+            rename_map[col] = "Dst_Port"
+        elif clean in ["src ip", "src_ip", "source_ip", "source ip"]:
+            rename_map[col] = "Src_IP"
+        elif clean in ["dst ip", "dst_ip", "dest_ip", "destination_ip", "destination ip"]:
+            rename_map[col] = "Dst_IP"
+        elif clean in ["timestamp", "time_stamp", "time", "date_time", "datetime"]:
+            rename_map[col] = "Timestamp"
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    return df
 
 
 # ============================================================
@@ -466,8 +489,6 @@ def create_visualizations(results: Dict, prediction_type: str):
                 pred: px.colors.qualitative.Set1[i % len(px.colors.qualitative.Set1)]
                 for i, pred in enumerate(unique_preds)
             }
-            colors = [color_map[p] for p in predictions]
-            labels = predictions
 
             st.markdown("**🎨 Color Legend:**")
             legend_cols = st.columns(min(len(unique_preds), 4))
@@ -720,11 +741,13 @@ def process_network_data(data: pd.DataFrame, predictor):
             st.markdown("---")
             st.subheader("💾 Export Network Analysis")
 
+            anomaly_predictions = results.get("predictions", [])
+            anomaly_confidence = results.get("confidence_scores", [])
+            attack_predictions = attack_results.get("predictions", [])
+            attack_confidence = attack_results.get("confidence_scores", [])
+
             col1, col2 = st.columns(2)
             with col1:
-                anomaly_predictions = results.get("predictions", [])
-                anomaly_confidence = results.get("confidence_scores", [])
-
                 if anomaly_predictions:
                     anomaly_df = create_arrow_safe_dataframe(
                         {
@@ -743,9 +766,6 @@ def process_network_data(data: pd.DataFrame, predictor):
                     )
 
             with col2:
-                attack_predictions = attack_results.get("predictions", [])
-                attack_confidence = attack_results.get("confidence_scores", [])
-
                 if attack_predictions:
                     attack_df = create_arrow_safe_dataframe(
                         {
@@ -818,23 +838,55 @@ def process_network_data(data: pd.DataFrame, predictor):
                     )
 
                 with col2:
-                    combined_df = create_arrow_safe_dataframe(
-                        {
-                            "Sample_ID": list(range(1, len(anomaly_predictions) + 1)),
-                            "Anomaly_Detection": [str(p) for p in anomaly_predictions],
-                            "Anomaly_Confidence": [float(c) for c in anomaly_confidence],
-                            "Attack_Type": [str(p) for p in attack_predictions],
-                            "Attack_Confidence": [float(c) for c in attack_confidence],
-                            "Overall_Risk": [str("High" if a == "Attack" else "Low") for a in anomaly_predictions],
-                        }
+                    # Incident Response ready CSV export
+                    base_export_df = normalize_network_export_columns(data).reset_index(drop=True)
+
+                    min_len = min(
+                        len(base_export_df),
+                        len(anomaly_predictions),
+                        len(anomaly_confidence),
+                        len(attack_predictions),
+                        len(attack_confidence),
                     )
 
+                    base_export_df = base_export_df.iloc[:min_len].copy()
+                    anomaly_predictions_trim = anomaly_predictions[:min_len]
+                    anomaly_confidence_trim = anomaly_confidence[:min_len]
+                    attack_predictions_trim = attack_predictions[:min_len]
+                    attack_confidence_trim = attack_confidence[:min_len]
+
+                    base_export_df["Sample_ID"] = list(range(1, min_len + 1))
+                    base_export_df["Anomaly_Detection"] = [str(p) for p in anomaly_predictions_trim]
+                    base_export_df["Anomaly_Confidence"] = [float(c) for c in anomaly_confidence_trim]
+                    base_export_df["Attack_Type"] = [str(p) for p in attack_predictions_trim]
+                    base_export_df["Attack_Confidence"] = [float(c) for c in attack_confidence_trim]
+                    base_export_df["Overall_Risk"] = [
+                        "High" if a == "Attack" else "Low" for a in anomaly_predictions_trim
+                    ]
+
+                    preferred_cols = [
+                        "Dst_Port",
+                        "Sample_ID",
+                        "Src_IP",
+                        "Dst_IP",
+                        "Timestamp",
+                        "Anomaly_Detection",
+                        "Anomaly_Confidence",
+                        "Attack_Type",
+                        "Attack_Confidence",
+                        "Overall_Risk",
+                    ]
+
+                    ordered_cols = [c for c in preferred_cols if c in base_export_df.columns]
+                    remaining_cols = [c for c in base_export_df.columns if c not in ordered_cols]
+                    combined_df = base_export_df[ordered_cols + remaining_cols]
+
                     st.download_button(
-                        label="📊 Download Combined Results (CSV)",
+                        label="📊 Download Incident Response Ready CSV",
                         data=combined_df.to_csv(index=False),
-                        file_name=f"combined_network_analysis_{int(time.time())}.csv",
+                        file_name=f"incident_response_ready_{int(time.time())}.csv",
                         mime="text/csv",
-                        key="sa_combined_csv_download",
+                        key="sa_incident_ready_csv_download",
                     )
 
         if GEMINI_AVAILABLE and GEMINI_API_CONFIGURED:
@@ -1383,7 +1435,6 @@ def render_security_agent():
             current_step=0,
         )
 
-    # Sidebar
     render_sidebar_context(
         "Security Agent Context",
         {

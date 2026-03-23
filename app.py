@@ -36,7 +36,7 @@ from ui_components import (
 
 def gemini_markdown_summary(prompt):
     try:
-        if 'api_calls_today' not in st.session_state:
+        if "api_calls_today" not in st.session_state:
             st.session_state.api_calls_today = 0
 
         if st.session_state.api_calls_today >= 45:
@@ -54,6 +54,142 @@ def gemini_markdown_summary(prompt):
             return "⚠️ **API Key Error**: Please check your Gemini API key in the secrets configuration."
         else:
             return f"⚠️ **API Error**: Unable to generate response. Error: {str(e)[:100]}..."
+
+
+def apply_containment_fix():
+    """
+    Optional demo containment action using AWS EC2.
+    If credentials or an instance ID are not configured, falls back to safe demo mode.
+    """
+    try:
+        try:
+            aws_cfg = dict(st.secrets["AWS"])
+        except Exception:
+            aws_cfg = {}
+
+        access_key = aws_cfg.get("ACCESS_KEY_ID")
+        secret_key = aws_cfg.get("SECRET_ACCESS_KEY")
+        region = aws_cfg.get("REGION", "ap-south-1")
+        instance_id = aws_cfg.get("INSTANCE_ID") or aws_cfg.get("DEMO_INSTANCE_ID")
+
+        if access_key and secret_key and instance_id:
+            ec2 = boto3.client(
+                "ec2",
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                region_name=region,
+            )
+            ec2.stop_instances(InstanceIds=[instance_id])
+            return True, f"✅ Containment action triggered. EC2 instance `{instance_id}` stop request submitted.", "live"
+
+        return True, "✅ Demo mode: no live AWS instance configured, so no EC2 call was made.", "demo"
+
+    except Exception as e:
+        return False, f"❌ Failed to apply containment fix: {str(e)}", "error"
+
+
+# ============================================================
+# CSV NORMALIZATION HELPERS
+# ============================================================
+
+def normalize_incident_csv_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize likely column aliases from Security Agent / attack CSV exports."""
+    df = df.copy()
+    df.columns = [str(col).strip() for col in df.columns]
+
+    rename_map = {}
+    for col in df.columns:
+        clean = col.lower()
+
+        if clean in ["dst port", "dst_port", "destination_port", "destination port"]:
+            rename_map[col] = "Dst_Port"
+        elif clean in ["attack confidence", "attack_confidence"]:
+            rename_map[col] = "Attack_Confidence"
+        elif clean in ["attack type", "attack_type"]:
+            rename_map[col] = "Attack_Type"
+        elif clean in ["src ip", "src_ip", "source_ip", "source ip"]:
+            rename_map[col] = "Src_IP"
+        elif clean in ["dst ip", "dst_ip", "dest_ip", "destination_ip", "destination ip"]:
+            rename_map[col] = "Dst_IP"
+        elif clean in ["timestamp", "time_stamp", "time", "date_time", "datetime"]:
+            rename_map[col] = "Timestamp"
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    return df
+
+
+def build_attack_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Build a resilient attack summary depending on which columns are available."""
+    agg_dict = {}
+
+    if "Dst_Port" in df.columns:
+        agg_dict["Dst_Port"] = lambda x: sorted(set(pd.Series(x).dropna().tolist()))
+
+    if "Attack_Confidence" in df.columns:
+        agg_dict["Attack_Confidence"] = lambda x: sorted(set(pd.Series(x).dropna().tolist()))
+
+    if agg_dict:
+        return df.groupby("Attack_Type").agg(agg_dict).reset_index()
+
+    return df.groupby("Attack_Type").size().reset_index(name="Count")
+
+
+def format_attack_summary(attack_summary: pd.DataFrame) -> str:
+    """Convert attack summary dataframe into prompt-friendly bullet lines."""
+    summary_lines = []
+
+    for _, row in attack_summary.iterrows():
+        line = f"- {row['Attack_Type']}"
+
+        if "Dst_Port" in attack_summary.columns:
+            line += f": Ports {row['Dst_Port']}"
+
+        if "Attack_Confidence" in attack_summary.columns:
+            line += f", Confidence {row['Attack_Confidence']}"
+
+        if "Count" in attack_summary.columns:
+            line += f", Count {row['Count']}"
+
+        summary_lines.append(line)
+
+    return "\n".join(summary_lines)
+
+
+def find_relevant_incidents(attack_types, incident_library):
+    """Find exact and fuzzy playbook matches from data.json."""
+    matching_incidents = []
+    similar_incidents = []
+
+    for attack_type in attack_types:
+        attack_type_str = str(attack_type).lower()
+
+        for attack in incident_library:
+            library_attack = attack["Attack Type"].lower()
+
+            if library_attack == attack_type_str:
+                for incident in attack["Incidents"]:
+                    matching_incidents.append({
+                        "Attack Type": attack["Attack Type"],
+                        "Incident Title": incident["Incident Title"],
+                        "Description": incident["Description"],
+                        "Containment Steps": incident["Containment Steps"],
+                        "Remediation Options": incident["Remediation Options"],
+                        "Forensic Steps": incident["Forensic Steps"]
+                    })
+            elif attack_type_str in library_attack or library_attack in attack_type_str:
+                for incident in attack["Incidents"]:
+                    similar_incidents.append({
+                        "Attack Type": attack["Attack Type"],
+                        "Incident Title": incident["Incident Title"],
+                        "Description": incident["Description"],
+                        "Containment Steps": incident["Containment Steps"],
+                        "Remediation Options": incident["Remediation Options"],
+                        "Forensic Steps": incident["Forensic Steps"]
+                    })
+
+    return matching_incidents + similar_incidents
 
 
 # ============================================================
@@ -90,23 +226,23 @@ data = load_incident_data()
 # SESSION STATE
 # ============================================================
 
-if 'incident' not in st.session_state:
+if "incident" not in st.session_state:
     st.session_state.incident = None
-if 'top_doc' not in st.session_state:
+if "top_doc" not in st.session_state:
     st.session_state.top_doc = None
-if 'chat_history' not in st.session_state:
+if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-if 'incident_summary' not in st.session_state:
+if "incident_summary" not in st.session_state:
     st.session_state.incident_summary = None
-if 'incident_metadata' not in st.session_state:
+if "incident_metadata" not in st.session_state:
     st.session_state.incident_metadata = {}
-if 'incident_query' not in st.session_state:
+if "incident_query" not in st.session_state:
     st.session_state.incident_query = None
-if 'incident_chat_messages' not in st.session_state:
+if "incident_chat_messages" not in st.session_state:
     st.session_state.incident_chat_messages = []
-if 'uploaded_logs' not in st.session_state:
+if "uploaded_logs" not in st.session_state:
     st.session_state.uploaded_logs = None
-if 'api_calls_today' not in st.session_state:
+if "api_calls_today" not in st.session_state:
     st.session_state.api_calls_today = 0
 
 
@@ -306,86 +442,71 @@ IMPORTANT FORMATTING RULES:
             type=["csv"],
             key="ticket_csv"
         )
+
         attack_summary_str = ""
+        csv_ready = False
+        df = None
+        attack_summary = None
 
         if uploaded_file:
             df = pd.read_csv(uploaded_file)
+            df = normalize_incident_csv_columns(df)
             st.session_state.uploaded_logs = df
 
-            preview_cols = st.columns(3)
+            preview_cols = st.columns(4)
             with preview_cols[0]:
                 st.metric("Rows Uploaded", len(df))
             with preview_cols[1]:
                 st.metric("Columns Detected", len(df.columns))
             with preview_cols[2]:
                 st.metric("Analysis Mode", "CSV Triage")
+            with preview_cols[3]:
+                st.metric("Attack Type Column", "Found" if "Attack_Type" in df.columns else "Missing")
 
-            attack_summary = df.groupby('Attack_Type').agg({
-                'Dst_Port': lambda x: list(set(x)),
-                'Attack_Confidence': lambda x: list(set(x))
-            }).reset_index()
+            with st.expander("📋 Detected CSV Columns", expanded=False):
+                st.write(list(df.columns))
 
-            attack_summary_str = "\n".join([
-                f"- {row['Attack_Type']}: Ports {row['Dst_Port']}, Confidence {row['Attack_Confidence']}"
-                for _, row in attack_summary.iterrows()
-            ])
+            if "Attack_Type" not in df.columns:
+                st.error("❌ Uploaded CSV must contain an `Attack_Type` column for this workflow.")
+                st.info("Use the Security Agent download labelled **Incident Response Ready CSV** or upload a file that includes attack classifications.")
+            else:
+                csv_ready = True
 
-            st.markdown("### 🧾 Detected attack types and ports")
-            st.dataframe(attack_summary, use_container_width=True)
+                attack_summary = build_attack_summary(df)
+                attack_summary_str = format_attack_summary(attack_summary)
 
-            if attack_summary_str:
-                matching_incidents = []
-                similar_incidents = []
+                st.markdown("### 🧾 Detected attack summary")
+                st.dataframe(attack_summary, use_container_width=True)
 
-                for attack_type in attack_summary['Attack_Type']:
-                    for attack in data:
-                        if attack["Attack Type"].lower() == attack_type.lower():
-                            for incident in attack["Incidents"]:
-                                matching_incidents.append({
-                                    "Attack Type": attack["Attack Type"],
-                                    "Incident Title": incident["Incident Title"],
-                                    "Description": incident["Description"],
-                                    "Containment Steps": incident["Containment Steps"],
-                                    "Remediation Options": incident["Remediation Options"],
-                                    "Forensic Steps": incident["Forensic Steps"]
-                                })
-                        elif (
-                            attack_type.lower() in attack["Attack Type"].lower()
-                            or attack["Attack Type"].lower() in attack_type.lower()
-                        ):
-                            for incident in attack["Incidents"]:
-                                similar_incidents.append({
-                                    "Attack Type": attack["Attack Type"],
-                                    "Incident Title": incident["Incident Title"],
-                                    "Description": incident["Description"],
-                                    "Containment Steps": incident["Containment Steps"],
-                                    "Remediation Options": incident["Remediation Options"],
-                                    "Forensic Steps": incident["Forensic Steps"]
-                                })
+                if attack_summary_str:
+                    all_relevant_incidents = find_relevant_incidents(
+                        attack_summary["Attack_Type"].astype(str).tolist(),
+                        data
+                    )
 
-                all_relevant_incidents = matching_incidents + similar_incidents
+                    if all_relevant_incidents:
+                        attack_types_found = list(set([incident["Attack Type"] for incident in all_relevant_incidents]))
 
-                if all_relevant_incidents:
-                    attack_types_found = list(set([incident['Attack Type'] for incident in all_relevant_incidents]))
-                    ports_found = []
-                    for _, row in attack_summary.iterrows():
-                        ports_found.extend(row['Dst_Port'])
-                    ports_found = list(set(ports_found))
+                        ports_found = []
+                        if "Dst_Port" in attack_summary.columns:
+                            for _, row in attack_summary.iterrows():
+                                ports_found.extend(row["Dst_Port"])
+                            ports_found = list(set(ports_found))
 
-                    detailed_prompt = f"""
+                        detailed_prompt = f"""
 You are a cybersecurity assistant. Analyze these detected network attacks and provide comprehensive recommendations.
 
 DETECTED ATTACKS:
 {attack_summary_str}
 
 ATTACK TYPES FOUND: {', '.join(attack_types_found)}
-PORTS INVOLVED: {', '.join(map(str, ports_found))}
+PORTS INVOLVED: {', '.join(map(str, ports_found)) if ports_found else 'Not available in uploaded CSV'}
 
 RELEVANT INCIDENT PLAYBOOKS:
 """
 
-                    for incident in all_relevant_incidents:
-                        detailed_prompt += f"""
+                        for incident in all_relevant_incidents:
+                            detailed_prompt += f"""
 **{incident['Attack Type']} - {incident['Incident Title']}**
 Description: {incident['Description']}
 Containment: {incident['Containment Steps']}
@@ -393,7 +514,7 @@ Remediation: {incident['Remediation Options']}
 Forensic: {incident['Forensic Steps']}
 """
 
-                    detailed_prompt += """
+                        detailed_prompt += """
 
 Create a CLEAR, ACTIONABLE INCIDENT RESPONSE PLAN.
 
@@ -421,24 +542,28 @@ RESPONSE FORMAT RULES:
 • Use emojis in section headers
 """
 
-                    with st.status("🧠 Analyzing attacks with playbook data...", expanded=True) as status:
-                        summary = gemini_markdown_summary(detailed_prompt)
-                        status.update(label="✅ Analysis complete!", state="complete")
+                        with st.status("🧠 Analyzing attacks with playbook data...", expanded=True) as status:
+                            summary = gemini_markdown_summary(detailed_prompt)
+                            status.update(label="✅ Analysis complete!", state="complete")
 
-                    st.markdown("### 🧾 Tailored Fix Summary")
-                    st.markdown(summary)
+                        st.markdown("### 🧾 Tailored Fix Summary")
+                        st.markdown(summary)
 
-                    st.session_state.incident = {
-                        "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}",
-                        "content": summary,
-                        "metadata": {"attack_types": attack_summary['Attack_Type'].tolist()}
-                    }
-                    st.session_state.incident_summary = summary
-                    st.session_state.incident_metadata = {"uploaded_csv": True}
-                    st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}"
+                        st.session_state.incident = {
+                            "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}",
+                            "content": summary,
+                            "metadata": {"attack_types": attack_summary["Attack_Type"].astype(str).tolist()}
+                        }
+                        st.session_state.incident_summary = summary
+                        st.session_state.incident_metadata = {
+                            "uploaded_csv": True,
+                            "columns": list(df.columns),
+                            "has_dst_port": "Dst_Port" in df.columns
+                        }
+                        st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}"
 
-                else:
-                    detailed_prompt = f"""
+                    else:
+                        detailed_prompt = f"""
 You are a cybersecurity incident response assistant.
 
 Analyze this detected network attack data:
@@ -466,37 +591,41 @@ RESPONSE FORMAT RULES:
 • Use emojis in headers
 """
 
-                    with st.status("🧠 Generating comprehensive recommendations...", expanded=True) as status:
-                        summary = gemini_markdown_summary(detailed_prompt)
-                        status.update(label="✅ Recommendations ready!", state="complete")
+                        with st.status("🧠 Generating comprehensive recommendations...", expanded=True) as status:
+                            summary = gemini_markdown_summary(detailed_prompt)
+                            status.update(label="✅ Recommendations ready!", state="complete")
 
-                    st.markdown("### 🧾 Generated Fix Summary")
-                    st.markdown(summary)
+                        st.markdown("### 🧾 Generated Fix Summary")
+                        st.markdown(summary)
 
-                    st.session_state.incident = {
-                        "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}",
-                        "content": summary,
-                        "metadata": {"attack_types": attack_summary['Attack_Type'].tolist()}
-                    }
-                    st.session_state.incident_summary = summary
-                    st.session_state.incident_metadata = {"uploaded_csv": True}
-                    st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].tolist())}"
+                        st.session_state.incident = {
+                            "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}",
+                            "content": summary,
+                            "metadata": {"attack_types": attack_summary["Attack_Type"].astype(str).tolist()}
+                        }
+                        st.session_state.incident_summary = summary
+                        st.session_state.incident_metadata = {
+                            "uploaded_csv": True,
+                            "columns": list(df.columns),
+                            "has_dst_port": "Dst_Port" in df.columns
+                        }
+                        st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}"
 
-                    st.markdown("---")
-                    st.markdown("### 🛠️ Apply Containment Fix")
-                    if st.button("🚨 Apply Fix (Stop EC2 Instance)", key="apply_fix_csv_no_match", type="primary"):
-                        success, message, state = apply_containment_fix()
-                        if success:
-                            st.success(message)
-                            st.info("📋 Ticket raised for remediation by Level 2 Engineer")
-                            st.markdown("**Containment Actions Applied:**")
-                            st.markdown("- ✅ Isolated affected EC2 instance")
-                            st.markdown("- ✅ Stopped malicious traffic")
-                            st.markdown("- ✅ Preserved evidence for forensics")
-                        else:
-                            st.error(message)
+                        st.markdown("---")
+                        st.markdown("### 🛠️ Apply Containment Fix")
+                        if st.button("🚨 Apply Fix (Stop EC2 Instance)", key="apply_fix_csv_no_match", type="primary"):
+                            success, message, state = apply_containment_fix()
+                            if success:
+                                st.success(message)
+                                st.info("📋 Ticket raised for remediation by Level 2 Engineer")
+                                st.markdown("**Containment Actions Applied:**")
+                                st.markdown("- ✅ Isolated affected EC2 instance")
+                                st.markdown("- ✅ Stopped malicious traffic")
+                                st.markdown("- ✅ Preserved evidence for forensics")
+                            else:
+                                st.error(message)
 
-        if not uploaded_file:
+        if not uploaded_file or not csv_ready:
             st.markdown("---")
             st.markdown("### Or select an incident manually:")
 
@@ -562,7 +691,7 @@ FORMATTING RULES:
                 st.session_state.incident_metadata = selected_incident
                 st.session_state.incident_query = selected_incident["Incident Title"]
 
-        if st.session_state.get('incident_summary'):
+        if st.session_state.get("incident_summary"):
             st.markdown("---")
             st.markdown("## 🤖 Cybersecurity Assistant")
 
@@ -658,7 +787,7 @@ FORMATTING RULES:
                         unsafe_allow_html=True
                     )
 
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
             st.markdown('<div class="chat-input-container">', unsafe_allow_html=True)
 
             col1, col2 = st.columns([5, 1])
@@ -672,19 +801,19 @@ FORMATTING RULES:
                     st.session_state.incident_chat_messages = []
                     st.rerun()
 
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
             if send_btn and user_input:
                 st.session_state.incident_chat_messages.append({"role": "user", "content": user_input})
 
                 cybersecurity_keywords = [
-                    'attack', 'threat', 'security', 'anomaly', 'malicious', 'intrusion',
-                    'vulnerability', 'exploit', 'malware', 'breach', 'network', 'traffic',
-                    'ddos', 'dos', 'sql injection', 'brute force', 'botnet', 'infiltration',
-                    'analysis', 'detection', 'classification', 'confidence', 'risk',
-                    'suspicious', 'benign', 'mitigation', 'defense', 'protection',
-                    'firewall', 'ips', 'ids', 'siem', 'incident', 'response', 'containment',
-                    'remediation', 'forensic', 'port', 'block', 'isolate'
+                    "attack", "threat", "security", "anomaly", "malicious", "intrusion",
+                    "vulnerability", "exploit", "malware", "breach", "network", "traffic",
+                    "ddos", "dos", "sql injection", "brute force", "botnet", "infiltration",
+                    "analysis", "detection", "classification", "confidence", "risk",
+                    "suspicious", "benign", "mitigation", "defense", "protection",
+                    "firewall", "ips", "ids", "siem", "incident", "response", "containment",
+                    "remediation", "forensic", "port", "block", "isolate"
                 ]
 
                 is_cybersecurity = any(keyword in user_input.lower() for keyword in cybersecurity_keywords)
@@ -720,7 +849,7 @@ FORMATTING RULES:
                     st.session_state.incident_chat_messages = st.session_state.incident_chat_messages[-20:]
 
                 st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # --------------------------------------------------------
     # TAB 3: LEGACY ANALYTICS
