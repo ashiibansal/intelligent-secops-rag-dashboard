@@ -1,26 +1,15 @@
-import os
 import json
 import streamlit as st
 
 st.set_page_config(page_title="🛡️ Unified Cybersecurity Platform", layout="wide")
 
-from dashboard import render_dashboard
-from security_agent.security_agent_page import render_security_agent
-from vector_loader import load_vectorstore
-from rag_answerer import (
-    rank_remediation_steps,
-    generate_fix_steps,
-    gemini_answer_question
-)
 import google.generativeai as genai
 import pandas as pd
 import boto3
 
-
-# ============================================================
-# UNIFIED UI HELPERS
-# ============================================================
-
+from dashboard import render_dashboard
+from security_agent.security_agent_page import render_security_agent
+from vector_loader import load_vectorstore
 from ui_components import (
     inject_unified_ui_css,
     render_top_header,
@@ -34,26 +23,35 @@ from ui_components import (
 # CORE LLM HELPERS
 # ============================================================
 
-def gemini_markdown_summary(prompt):
+def gemini_markdown_summary(prompt: str) -> str:
     try:
         if "api_calls_today" not in st.session_state:
             st.session_state.api_calls_today = 0
 
+        # Soft local warning only — do not block the request
         if st.session_state.api_calls_today >= 45:
-            return "⚠️ **API Quota Warning**: Approaching daily limit. Please upgrade your plan or try again tomorrow."
+            st.warning(
+                "High local Gemini usage detected in this session. "
+                "The app will still try the request if your actual Gemini project quota is available."
+            )
 
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(prompt)
+
         st.session_state.api_calls_today += 1
         return response.text.strip()
 
     except Exception as e:
-        if "quota" in str(e).lower() or "429" in str(e):
-            return "⚠️ **API Quota Exceeded**: You've reached your daily limit for Gemini API requests. Please try again tomorrow or upgrade your plan."
-        elif "api_key" in str(e).lower():
-            return "⚠️ **API Key Error**: Please check your Gemini API key in the secrets configuration."
-        else:
-            return f"⚠️ **API Error**: Unable to generate response. Error: {str(e)[:100]}..."
+        err = str(e).lower()
+        if "quota" in err or "429" in err or "resource_exhausted" in err:
+            return (
+                "⚠️ **Gemini quota/rate limit reached** for the currently configured project. "
+                "If you changed API keys recently, make sure the new key belongs to a different project "
+                "or wait for quota reset."
+            )
+        if "api_key" in err or "permission" in err or "unauthenticated" in err:
+            return "⚠️ **API Key Error**: Please verify your Gemini API key in `.streamlit/secrets.toml`."
+        return f"⚠️ **API Error**: Unable to generate response. Error: {str(e)[:160]}..."
 
 
 def apply_containment_fix():
@@ -226,24 +224,24 @@ data = load_incident_data()
 # SESSION STATE
 # ============================================================
 
-if "incident" not in st.session_state:
-    st.session_state.incident = None
-if "top_doc" not in st.session_state:
-    st.session_state.top_doc = None
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "incident_summary" not in st.session_state:
-    st.session_state.incident_summary = None
-if "incident_metadata" not in st.session_state:
-    st.session_state.incident_metadata = {}
-if "incident_query" not in st.session_state:
-    st.session_state.incident_query = None
-if "incident_chat_messages" not in st.session_state:
-    st.session_state.incident_chat_messages = []
-if "uploaded_logs" not in st.session_state:
-    st.session_state.uploaded_logs = None
-if "api_calls_today" not in st.session_state:
-    st.session_state.api_calls_today = 0
+defaults = {
+    "incident": None,
+    "top_doc": None,
+    "chat_history": [],
+    "incident_summary": None,
+    "incident_metadata": {},
+    "incident_query": None,
+    "incident_chat_messages": [],
+    "uploaded_logs": None,
+    "api_calls_today": 0,
+    "incident_handoff_ready": False,
+    "incident_handoff_source": None,
+    "incident_handoff_filename": None,
+    "incident_handoff_attack_types": [],
+}
+for key, value in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 
 # ============================================================
@@ -259,8 +257,8 @@ render_top_header(
         "Gemini Assisted",
         "RAG Incident Search",
         "Threat Analytics",
-        "Security Agent Ready"
-    ]
+        "Security Agent Ready",
+    ],
 )
 
 
@@ -268,9 +266,14 @@ render_top_header(
 # SIDEBAR CONTEXT
 # ============================================================
 
+with st.sidebar:
+    if st.button("🔄 Reset Local Gemini Counter", use_container_width=True):
+        st.session_state.api_calls_today = 0
+        st.success("Local Gemini counter reset for this session.")
+
 render_sidebar_context("Platform Status", {
     "Gemini API": "Connected" if api_connected else "Unavailable",
-    "API Calls Today": f"{st.session_state.get('api_calls_today', 0)}/50",
+    "Local Gemini Count": f"{st.session_state.get('api_calls_today', 0)} calls",
     "Incident Summary": "Ready" if st.session_state.get("incident_summary") else "Not generated",
     "Uploaded CSV": "Present" if st.session_state.get("uploaded_logs") is not None else "None",
 })
@@ -345,6 +348,27 @@ with main_tab1:
         steps=incident_steps,
         current_step=incident_current_step
     )
+
+    if st.session_state.get("incident_handoff_ready"):
+        handoff_source = st.session_state.get("incident_handoff_source", "Unknown")
+        handoff_file = st.session_state.get("incident_handoff_filename", "Unknown file")
+        handoff_types = st.session_state.get("incident_handoff_attack_types", [])
+
+        st.success(f"✅ Handoff received from {handoff_source}: {handoff_file}")
+
+        if handoff_types:
+            st.info(f"Detected attack types: {', '.join(handoff_types)}")
+
+        if st.button("🧹 Clear Security Agent Handoff", key="clear_ir_handoff"):
+            for key in [
+                "incident_handoff_ready",
+                "incident_handoff_source",
+                "incident_handoff_filename",
+                "incident_handoff_attack_types",
+            ]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
 
     TABS = ["General Purpose Use", "Ticket Raised Post Identification", "Legacy Analytics"]
     tab1, tab2, tab3 = st.tabs(TABS)
@@ -448,7 +472,31 @@ IMPORTANT FORMATTING RULES:
         df = None
         attack_summary = None
 
-        if uploaded_file:
+        if st.session_state.get("incident_handoff_ready") and st.session_state.get("uploaded_logs") is not None:
+            df = st.session_state.uploaded_logs.copy()
+            df = normalize_incident_csv_columns(df)
+            csv_ready = "Attack_Type" in df.columns
+
+            st.info("📨 Using analysis sent from Security Agent.")
+
+            preview_cols = st.columns(4)
+            with preview_cols[0]:
+                st.metric("Rows Loaded", len(df))
+            with preview_cols[1]:
+                st.metric("Columns Detected", len(df.columns))
+            with preview_cols[2]:
+                st.metric("Analysis Mode", "Security Agent Handoff")
+            with preview_cols[3]:
+                st.metric("Attack Type Column", "Found" if "Attack_Type" in df.columns else "Missing")
+
+            with st.expander("📋 Handoff CSV Columns", expanded=False):
+                st.write(list(df.columns))
+
+            if not csv_ready:
+                st.error("❌ Security Agent handoff does not contain an `Attack_Type` column.")
+                st.info("Please re-run attack classification in the Security Agent and send the results again.")
+
+        elif uploaded_file:
             df = pd.read_csv(uploaded_file)
             df = normalize_incident_csv_columns(df)
             st.session_state.uploaded_logs = df
@@ -472,28 +520,29 @@ IMPORTANT FORMATTING RULES:
             else:
                 csv_ready = True
 
-                attack_summary = build_attack_summary(df)
-                attack_summary_str = format_attack_summary(attack_summary)
+        if csv_ready and df is not None:
+            attack_summary = build_attack_summary(df)
+            attack_summary_str = format_attack_summary(attack_summary)
 
-                st.markdown("### 🧾 Detected attack summary")
-                st.dataframe(attack_summary, use_container_width=True)
+            st.markdown("### 🧾 Detected attack summary")
+            st.dataframe(attack_summary, use_container_width=True)
 
-                if attack_summary_str:
-                    all_relevant_incidents = find_relevant_incidents(
-                        attack_summary["Attack_Type"].astype(str).tolist(),
-                        data
-                    )
+            if attack_summary_str:
+                all_relevant_incidents = find_relevant_incidents(
+                    attack_summary["Attack_Type"].astype(str).tolist(),
+                    data
+                )
 
-                    if all_relevant_incidents:
-                        attack_types_found = list(set([incident["Attack Type"] for incident in all_relevant_incidents]))
+                if all_relevant_incidents:
+                    attack_types_found = list(set([incident["Attack Type"] for incident in all_relevant_incidents]))
 
-                        ports_found = []
-                        if "Dst_Port" in attack_summary.columns:
-                            for _, row in attack_summary.iterrows():
-                                ports_found.extend(row["Dst_Port"])
-                            ports_found = list(set(ports_found))
+                    ports_found = []
+                    if "Dst_Port" in attack_summary.columns:
+                        for _, row in attack_summary.iterrows():
+                            ports_found.extend(row["Dst_Port"])
+                        ports_found = list(set(ports_found))
 
-                        detailed_prompt = f"""
+                    detailed_prompt = f"""
 You are a cybersecurity assistant. Analyze these detected network attacks and provide comprehensive recommendations.
 
 DETECTED ATTACKS:
@@ -505,8 +554,8 @@ PORTS INVOLVED: {', '.join(map(str, ports_found)) if ports_found else 'Not avail
 RELEVANT INCIDENT PLAYBOOKS:
 """
 
-                        for incident in all_relevant_incidents:
-                            detailed_prompt += f"""
+                    for incident in all_relevant_incidents:
+                        detailed_prompt += f"""
 **{incident['Attack Type']} - {incident['Incident Title']}**
 Description: {incident['Description']}
 Containment: {incident['Containment Steps']}
@@ -514,7 +563,7 @@ Remediation: {incident['Remediation Options']}
 Forensic: {incident['Forensic Steps']}
 """
 
-                        detailed_prompt += """
+                    detailed_prompt += """
 
 Create a CLEAR, ACTIONABLE INCIDENT RESPONSE PLAN.
 
@@ -542,28 +591,29 @@ RESPONSE FORMAT RULES:
 • Use emojis in section headers
 """
 
-                        with st.status("🧠 Analyzing attacks with playbook data...", expanded=True) as status:
-                            summary = gemini_markdown_summary(detailed_prompt)
-                            status.update(label="✅ Analysis complete!", state="complete")
+                    with st.status("🧠 Analyzing attacks with playbook data...", expanded=True) as status:
+                        summary = gemini_markdown_summary(detailed_prompt)
+                        status.update(label="✅ Analysis complete!", state="complete")
 
-                        st.markdown("### 🧾 Tailored Fix Summary")
-                        st.markdown(summary)
+                    st.markdown("### 🧾 Tailored Fix Summary")
+                    st.markdown(summary)
 
-                        st.session_state.incident = {
-                            "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}",
-                            "content": summary,
-                            "metadata": {"attack_types": attack_summary["Attack_Type"].astype(str).tolist()}
-                        }
-                        st.session_state.incident_summary = summary
-                        st.session_state.incident_metadata = {
-                            "uploaded_csv": True,
-                            "columns": list(df.columns),
-                            "has_dst_port": "Dst_Port" in df.columns
-                        }
-                        st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}"
+                    st.session_state.incident = {
+                        "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}",
+                        "content": summary,
+                        "metadata": {"attack_types": attack_summary["Attack_Type"].astype(str).tolist()}
+                    }
+                    st.session_state.incident_summary = summary
+                    st.session_state.incident_metadata = {
+                        "uploaded_csv": True,
+                        "columns": list(df.columns),
+                        "has_dst_port": "Dst_Port" in df.columns,
+                        "handoff_used": st.session_state.get("incident_handoff_ready", False),
+                    }
+                    st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}"
 
-                    else:
-                        detailed_prompt = f"""
+                else:
+                    detailed_prompt = f"""
 You are a cybersecurity incident response assistant.
 
 Analyze this detected network attack data:
@@ -591,41 +641,42 @@ RESPONSE FORMAT RULES:
 • Use emojis in headers
 """
 
-                        with st.status("🧠 Generating comprehensive recommendations...", expanded=True) as status:
-                            summary = gemini_markdown_summary(detailed_prompt)
-                            status.update(label="✅ Recommendations ready!", state="complete")
+                    with st.status("🧠 Generating comprehensive recommendations...", expanded=True) as status:
+                        summary = gemini_markdown_summary(detailed_prompt)
+                        status.update(label="✅ Recommendations ready!", state="complete")
 
-                        st.markdown("### 🧾 Generated Fix Summary")
-                        st.markdown(summary)
+                    st.markdown("### 🧾 Generated Fix Summary")
+                    st.markdown(summary)
 
-                        st.session_state.incident = {
-                            "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}",
-                            "content": summary,
-                            "metadata": {"attack_types": attack_summary["Attack_Type"].astype(str).tolist()}
-                        }
-                        st.session_state.incident_summary = summary
-                        st.session_state.incident_metadata = {
-                            "uploaded_csv": True,
-                            "columns": list(df.columns),
-                            "has_dst_port": "Dst_Port" in df.columns
-                        }
-                        st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}"
+                    st.session_state.incident = {
+                        "query": f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}",
+                        "content": summary,
+                        "metadata": {"attack_types": attack_summary["Attack_Type"].astype(str).tolist()}
+                    }
+                    st.session_state.incident_summary = summary
+                    st.session_state.incident_metadata = {
+                        "uploaded_csv": True,
+                        "columns": list(df.columns),
+                        "has_dst_port": "Dst_Port" in df.columns,
+                        "handoff_used": st.session_state.get("incident_handoff_ready", False),
+                    }
+                    st.session_state.incident_query = f"CSV Analysis: {', '.join(attack_summary['Attack_Type'].astype(str).tolist())}"
 
-                        st.markdown("---")
-                        st.markdown("### 🛠️ Apply Containment Fix")
-                        if st.button("🚨 Apply Fix (Stop EC2 Instance)", key="apply_fix_csv_no_match", type="primary"):
-                            success, message, state = apply_containment_fix()
-                            if success:
-                                st.success(message)
-                                st.info("📋 Ticket raised for remediation by Level 2 Engineer")
-                                st.markdown("**Containment Actions Applied:**")
-                                st.markdown("- ✅ Isolated affected EC2 instance")
-                                st.markdown("- ✅ Stopped malicious traffic")
-                                st.markdown("- ✅ Preserved evidence for forensics")
-                            else:
-                                st.error(message)
+                    st.markdown("---")
+                    st.markdown("### 🛠️ Apply Containment Fix")
+                    if st.button("🚨 Apply Fix (Stop EC2 Instance)", key="apply_fix_csv_no_match", type="primary"):
+                        success, message, state = apply_containment_fix()
+                        if success:
+                            st.success(message)
+                            st.info("📋 Ticket raised for remediation by Level 2 Engineer")
+                            st.markdown("**Containment Actions Applied:**")
+                            st.markdown("- ✅ Isolated affected EC2 instance")
+                            st.markdown("- ✅ Stopped malicious traffic")
+                            st.markdown("- ✅ Preserved evidence for forensics")
+                        else:
+                            st.error(message)
 
-        if not uploaded_file or not csv_ready:
+        if not uploaded_file and not st.session_state.get("incident_handoff_ready"):
             st.markdown("---")
             st.markdown("### Or select an incident manually:")
 
@@ -859,11 +910,15 @@ FORMATTING RULES:
         st.subheader("Legacy Analytics")
         st.markdown("Quick visualisation of uploaded network-attack CSVs from the ticket workflow.")
 
-        if "uploaded_logs" in st.session_state and st.session_state.uploaded_logs is not None:
-            st.success("✅ Using uploaded CSV from the Ticket Raised Post Identification tab")
+        if st.session_state.get("uploaded_logs") is not None:
+            if st.session_state.get("incident_handoff_ready"):
+                st.success("✅ Using Security Agent handoff data")
+            else:
+                st.success("✅ Using uploaded CSV from the Ticket Raised Post Identification tab")
+
             render_dashboard(st.session_state.uploaded_logs)
         else:
-            st.info("Upload a network attack CSV in 'Ticket Raised Post Identification' to view analytics here.")
+            st.info("Upload a network attack CSV in 'Ticket Raised Post Identification' or send one from the Security Agent to view analytics here.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 

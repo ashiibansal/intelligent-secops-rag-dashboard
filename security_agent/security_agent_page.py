@@ -64,7 +64,6 @@ except ImportError:
 # Import detection modules
 try:
     from security_agent.model_inference import CSE_CIC_IDS2018_Predictor
-
     NETWORK_MODELS_AVAILABLE = True
 except ImportError:
     NETWORK_MODELS_AVAILABLE = False
@@ -81,8 +80,6 @@ from ui_components import (
     render_sidebar_context,
 )
 
-# Inject CSS immediately so imported rendering still looks correct
-inject_unified_ui_css()
 
 # ============================================================
 # MODEL / DATA HELPERS
@@ -212,68 +209,31 @@ def classify_file_type(df: pd.DataFrame, filename: str) -> str:
     columns = [col.lower() for col in df.columns]
 
     network_indicators = [
-        "src_ip",
-        "dst_ip",
-        "srcip",
-        "dstip",
-        "source_ip",
-        "dest_ip",
-        "protocol",
-        "flow_duration",
-        "tot_fwd_pkts",
-        "tot_bwd_pkts",
-        "flow_byts_s",
-        "flow_pkts_s",
-        "fwd_pkts_s",
-        "bwd_pkts_s",
-        "label",
-        "timestamp",
-        "pkt_len",
-        "pkt_size",
-        "flags",
-        "fwd_psh_flags",
-        "bwd_psh_flags",
-        "fwd_urg_flags",
-        "fin_flag_cnt",
-        "syn_flag_cnt",
-        "rst_flag_cnt",
-        "psh_flag_cnt",
-        "ack_flag_cnt",
-        "urg_flag_cnt",
-        "down_up_ratio",
-        "pkt_len_mean",
-        "pkt_len_std",
+        "src_ip", "dst_ip", "srcip", "dstip", "source_ip", "dest_ip",
+        "protocol", "flow_duration", "tot_fwd_pkts", "tot_bwd_pkts",
+        "flow_byts_s", "flow_pkts_s", "fwd_pkts_s", "bwd_pkts_s",
+        "label", "timestamp", "pkt_len", "pkt_size", "flags",
+        "fwd_psh_flags", "bwd_psh_flags", "fwd_urg_flags",
+        "fin_flag_cnt", "syn_flag_cnt", "rst_flag_cnt",
+        "psh_flag_cnt", "ack_flag_cnt", "urg_flag_cnt",
+        "down_up_ratio", "pkt_len_mean", "pkt_len_std",
     ]
 
     login_indicators = [
-        "user",
-        "pc",
-        "date",
-        "logon_time",
-        "logoff_time",
-        "id",
-        "username",
-        "computer",
-        "hostname",
-        "workstation",
-        "login",
-        "logout",
-        "session",
-        "auth",
-        "event",
+        "user", "pc", "date", "logon_time", "logoff_time", "id",
+        "username", "computer", "hostname", "workstation",
+        "login", "logout", "session", "auth", "event",
     ]
 
     network_score = sum(1 for col in columns if col in network_indicators)
     login_score = sum(1 for col in columns if col in login_indicators)
 
     network_partial = sum(
-        1
-        for col in columns
+        1 for col in columns
         if any(indicator in col for indicator in ["ip", "pkt", "flow", "flag", "protocol", "port"])
     )
     login_partial = sum(
-        1
-        for col in columns
+        1 for col in columns
         if any(indicator in col for indicator in ["user", "login", "logon", "pc", "computer"])
     )
 
@@ -319,7 +279,7 @@ def classify_file_type(df: pd.DataFrame, filename: str) -> str:
 
     if total_network_score > total_login_score:
         return "network"
-    elif total_login_score > total_login_score:
+    elif total_login_score > total_network_score:
         return "login"
     return "unknown"
 
@@ -348,6 +308,61 @@ def normalize_network_export_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.rename(columns=rename_map)
 
     return df
+
+
+def build_incident_response_ready_df(
+    original_df: pd.DataFrame,
+    anomaly_predictions,
+    anomaly_confidence,
+    attack_predictions,
+    attack_confidence,
+) -> pd.DataFrame:
+    """
+    Build a dataframe that can be consumed directly by the Incident Response dashboard.
+    Preserves original network context and appends model outputs.
+    """
+    base_export_df = normalize_network_export_columns(original_df).reset_index(drop=True)
+
+    min_len = min(
+        len(base_export_df),
+        len(anomaly_predictions),
+        len(anomaly_confidence),
+        len(attack_predictions),
+        len(attack_confidence),
+    )
+
+    base_export_df = base_export_df.iloc[:min_len].copy()
+    anomaly_predictions_trim = anomaly_predictions[:min_len]
+    anomaly_confidence_trim = anomaly_confidence[:min_len]
+    attack_predictions_trim = attack_predictions[:min_len]
+    attack_confidence_trim = attack_confidence[:min_len]
+
+    base_export_df["Sample_ID"] = list(range(1, min_len + 1))
+    base_export_df["Anomaly_Detection"] = [str(p) for p in anomaly_predictions_trim]
+    base_export_df["Anomaly_Confidence"] = [float(c) for c in anomaly_confidence_trim]
+    base_export_df["Attack_Type"] = [str(p) for p in attack_predictions_trim]
+    base_export_df["Attack_Confidence"] = [float(c) for c in attack_confidence_trim]
+    base_export_df["Overall_Risk"] = [
+        "High" if a == "Attack" else "Low" for a in anomaly_predictions_trim
+    ]
+
+    preferred_cols = [
+        "Dst_Port",
+        "Sample_ID",
+        "Src_IP",
+        "Dst_IP",
+        "Timestamp",
+        "Anomaly_Detection",
+        "Anomaly_Confidence",
+        "Attack_Type",
+        "Attack_Confidence",
+        "Overall_Risk",
+    ]
+
+    ordered_cols = [c for c in preferred_cols if c in base_export_df.columns]
+    remaining_cols = [c for c in base_export_df.columns if c not in ordered_cols]
+
+    return base_export_df[ordered_cols + remaining_cols]
 
 
 # ============================================================
@@ -827,6 +842,14 @@ def process_network_data(data: pd.DataFrame, predictor):
                 complete_results["combined_analysis"]["attack_type_distribution"] = dict(attack_counts)
                 json_data = json.dumps(complete_results, indent=2, default=str)
 
+                incident_ready_df = build_incident_response_ready_df(
+                    data,
+                    anomaly_predictions,
+                    anomaly_confidence,
+                    attack_predictions,
+                    attack_confidence,
+                )
+
                 col1, col2 = st.columns(2)
                 with col1:
                     st.download_button(
@@ -838,56 +861,48 @@ def process_network_data(data: pd.DataFrame, predictor):
                     )
 
                 with col2:
-                    # Incident Response ready CSV export
-                    base_export_df = normalize_network_export_columns(data).reset_index(drop=True)
-
-                    min_len = min(
-                        len(base_export_df),
-                        len(anomaly_predictions),
-                        len(anomaly_confidence),
-                        len(attack_predictions),
-                        len(attack_confidence),
-                    )
-
-                    base_export_df = base_export_df.iloc[:min_len].copy()
-                    anomaly_predictions_trim = anomaly_predictions[:min_len]
-                    anomaly_confidence_trim = anomaly_confidence[:min_len]
-                    attack_predictions_trim = attack_predictions[:min_len]
-                    attack_confidence_trim = attack_confidence[:min_len]
-
-                    base_export_df["Sample_ID"] = list(range(1, min_len + 1))
-                    base_export_df["Anomaly_Detection"] = [str(p) for p in anomaly_predictions_trim]
-                    base_export_df["Anomaly_Confidence"] = [float(c) for c in anomaly_confidence_trim]
-                    base_export_df["Attack_Type"] = [str(p) for p in attack_predictions_trim]
-                    base_export_df["Attack_Confidence"] = [float(c) for c in attack_confidence_trim]
-                    base_export_df["Overall_Risk"] = [
-                        "High" if a == "Attack" else "Low" for a in anomaly_predictions_trim
-                    ]
-
-                    preferred_cols = [
-                        "Dst_Port",
-                        "Sample_ID",
-                        "Src_IP",
-                        "Dst_IP",
-                        "Timestamp",
-                        "Anomaly_Detection",
-                        "Anomaly_Confidence",
-                        "Attack_Type",
-                        "Attack_Confidence",
-                        "Overall_Risk",
-                    ]
-
-                    ordered_cols = [c for c in preferred_cols if c in base_export_df.columns]
-                    remaining_cols = [c for c in base_export_df.columns if c not in ordered_cols]
-                    combined_df = base_export_df[ordered_cols + remaining_cols]
-
                     st.download_button(
                         label="📊 Download Incident Response Ready CSV",
-                        data=combined_df.to_csv(index=False),
+                        data=incident_ready_df.to_csv(index=False),
                         file_name=f"incident_response_ready_{int(time.time())}.csv",
                         mime="text/csv",
                         key="sa_incident_ready_csv_download",
                     )
+
+                st.markdown("---")
+                st.subheader("🔗 Pipeline Handoff")
+
+                handoff_col1, handoff_col2 = st.columns(2)
+
+                with handoff_col1:
+                    if st.button("📨 Send to Incident Response", key="sa_send_to_ir_btn", use_container_width=True):
+                        st.session_state.uploaded_logs = incident_ready_df
+                        st.session_state.incident_handoff_ready = True
+                        st.session_state.incident_handoff_source = "Security Agent"
+                        st.session_state.incident_handoff_filename = st.session_state.get(
+                            "sa_uploaded_filename", "Unknown file"
+                        )
+                        st.session_state.incident_handoff_attack_types = sorted(
+                            incident_ready_df["Attack_Type"].dropna().astype(str).unique().tolist()
+                        ) if "Attack_Type" in incident_ready_df.columns else []
+
+                        st.success(
+                            "✅ Analysis sent to Incident Response. Open the Incident Response tab and continue in "
+                            "'Ticket Raised Post Identification' or 'Legacy Analytics'."
+                        )
+
+                with handoff_col2:
+                    if st.button("🧹 Clear Incident Handoff", key="sa_clear_ir_handoff_btn", use_container_width=True):
+                        for key in [
+                            "incident_handoff_ready",
+                            "incident_handoff_source",
+                            "incident_handoff_filename",
+                            "incident_handoff_attack_types",
+                        ]:
+                            if key in st.session_state:
+                                del st.session_state[key]
+                        st.info("Incident Response handoff cleared.")
+                        st.rerun()
 
         if GEMINI_AVAILABLE and GEMINI_API_CONFIGURED:
             st.markdown("---")
@@ -965,40 +980,12 @@ def process_network_data(data: pd.DataFrame, predictor):
                 st.session_state.sa_network_messages.append({"role": "user", "content": user_input})
 
                 cybersecurity_keywords = [
-                    "attack",
-                    "threat",
-                    "security",
-                    "anomaly",
-                    "malicious",
-                    "intrusion",
-                    "vulnerability",
-                    "exploit",
-                    "malware",
-                    "breach",
-                    "network",
-                    "traffic",
-                    "ddos",
-                    "dos",
-                    "sql injection",
-                    "brute force",
-                    "botnet",
-                    "infiltration",
-                    "analysis",
-                    "detection",
-                    "classification",
-                    "confidence",
-                    "risk",
-                    "suspicious",
-                    "benign",
-                    "mitigation",
-                    "defense",
-                    "protection",
-                    "firewall",
-                    "ips",
-                    "ids",
-                    "siem",
-                    "incident",
-                    "response",
+                    "attack", "threat", "security", "anomaly", "malicious", "intrusion",
+                    "vulnerability", "exploit", "malware", "breach", "network", "traffic",
+                    "ddos", "dos", "sql injection", "brute force", "botnet", "infiltration",
+                    "analysis", "detection", "classification", "confidence", "risk",
+                    "suspicious", "benign", "mitigation", "defense", "protection",
+                    "firewall", "ips", "ids", "siem", "incident", "response",
                 ]
 
                 is_cybersecurity = any(keyword in user_input.lower() for keyword in cybersecurity_keywords)
@@ -1332,6 +1319,7 @@ def display_login_results():
 # ============================================================
 
 def render_security_agent():
+    inject_unified_ui_css()
     """Main unified dashboard application."""
     network_predictor = load_network_predictor()
     le_user, le_pc, login_model = load_login_models()
