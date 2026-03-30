@@ -291,15 +291,23 @@ render_sidebar_context("Current Context", {
 # ============================================================
 
 main_tab1, main_tab2 = st.tabs(
-    ["🤖 Incident Response System", "🛡️ Detection & Security Agent"]
+    ["🛡️ Detection & Security Agent", "🤖 Incident Response System"]
 )
 
 
 # ============================================================
-# INCIDENT RESPONSE SYSTEM
+# SECURITY AGENT TAB (NOW TAB 1)
 # ============================================================
 
 with main_tab1:
+    render_security_agent()
+
+
+# ============================================================
+# INCIDENT RESPONSE SYSTEM (NOW TAB 2)
+# ============================================================
+
+with main_tab2:
     incident_count = len(data) if data else 0
     has_summary = bool(st.session_state.get("incident_summary"))
     uploaded_csv = "Yes" if st.session_state.get("uploaded_logs") is not None else "No"
@@ -920,11 +928,3 @@ FORMATTING RULES:
         else:
             st.info("Upload a network attack CSV in 'Ticket Raised Post Identification' or send one from the Security Agent to view analytics here.")
         st.markdown('</div>', unsafe_allow_html=True)
-
-
-# ============================================================
-# SECURITY AGENT TAB
-# ============================================================
-
-with main_tab2:
-    render_security_agent()
