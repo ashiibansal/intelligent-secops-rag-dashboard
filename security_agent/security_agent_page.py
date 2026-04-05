@@ -366,6 +366,197 @@ def build_incident_response_ready_df(
 
 
 # ============================================================
+# XAI HELPERS
+# ============================================================
+
+def _first_existing_column(df: pd.DataFrame, candidates):
+    """Return first matching column name from a candidate list."""
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
+def explain_network_sample(row: pd.Series, reference_df: pd.DataFrame) -> dict:
+    """
+    Lightweight heuristic explanation for a single network sample.
+    Returns top contributing reasons and a short natural-language explanation.
+    """
+    reasons = []
+
+    flow_pkt_rate_col = _first_existing_column(
+        reference_df,
+        ["Flow Pkts/s", "flow_pkts_s", "Flow_Pkts/s", "flow pkts/s"]
+    )
+    flow_byte_rate_col = _first_existing_column(
+        reference_df,
+        ["Flow Byts/s", "flow_byts_s", "Flow_Byts/s", "flow byts/s"]
+    )
+    dst_port_col = _first_existing_column(
+        reference_df,
+        ["Dst Port", "Dst_Port", "dst_port", "destination_port"]
+    )
+    duration_col = _first_existing_column(
+        reference_df,
+        ["Flow Duration", "flow_duration", "Flow_Duration"]
+    )
+    pkt_len_mean_col = _first_existing_column(
+        reference_df,
+        ["Pkt Len Mean", "pkt_len_mean", "Pkt_Len_Mean"]
+    )
+    syn_flag_col = _first_existing_column(
+        reference_df,
+        ["SYN Flag Cnt", "syn_flag_cnt", "Syn Flag Cnt"]
+    )
+    rst_flag_col = _first_existing_column(
+        reference_df,
+        ["RST Flag Cnt", "rst_flag_cnt", "Rst Flag Cnt"]
+    )
+
+    if flow_pkt_rate_col:
+        s = pd.to_numeric(reference_df[flow_pkt_rate_col], errors="coerce")
+        val = pd.to_numeric(pd.Series([row.get(flow_pkt_rate_col)]), errors="coerce").iloc[0]
+        if s.notna().sum() > 5 and pd.notna(val):
+            threshold = s.quantile(0.95)
+            if val >= threshold:
+                reasons.append(("High packet rate", f"{flow_pkt_rate_col}={val:.2f} exceeds 95th percentile"))
+
+    if flow_byte_rate_col:
+        s = pd.to_numeric(reference_df[flow_byte_rate_col], errors="coerce")
+        val = pd.to_numeric(pd.Series([row.get(flow_byte_rate_col)]), errors="coerce").iloc[0]
+        if s.notna().sum() > 5 and pd.notna(val):
+            threshold = s.quantile(0.95)
+            if val >= threshold:
+                reasons.append(("High byte rate", f"{flow_byte_rate_col}={val:.2f} exceeds 95th percentile"))
+
+    if duration_col:
+        s = pd.to_numeric(reference_df[duration_col], errors="coerce")
+        val = pd.to_numeric(pd.Series([row.get(duration_col)]), errors="coerce").iloc[0]
+        if s.notna().sum() > 5 and pd.notna(val):
+            high_threshold = s.quantile(0.95)
+            low_threshold = s.quantile(0.05)
+            if val >= high_threshold:
+                reasons.append(("Large flow duration", f"{duration_col}={val:.2f} unusually high"))
+            elif val <= low_threshold:
+                reasons.append(("Very short flow burst", f"{duration_col}={val:.2f} unusually low"))
+
+    if pkt_len_mean_col:
+        s = pd.to_numeric(reference_df[pkt_len_mean_col], errors="coerce")
+        val = pd.to_numeric(pd.Series([row.get(pkt_len_mean_col)]), errors="coerce").iloc[0]
+        if s.notna().sum() > 5 and pd.notna(val):
+            high_threshold = s.quantile(0.95)
+            low_threshold = s.quantile(0.05)
+            if val >= high_threshold:
+                reasons.append(("Large average packet length", f"{pkt_len_mean_col}={val:.2f} unusually high"))
+            elif val <= low_threshold:
+                reasons.append(("Small average packet length", f"{pkt_len_mean_col}={val:.2f} unusually low"))
+
+    if dst_port_col:
+        try:
+            port_val = int(float(row.get(dst_port_col)))
+            common_ports = {20, 21, 22, 23, 25, 53, 80, 110, 123, 135, 137, 138, 139, 143, 443, 445, 993, 995, 1433, 1521, 3306, 3389, 5432, 5900, 8080, 8443}
+            if port_val not in common_ports:
+                reasons.append(("Unusual port usage", f"{dst_port_col}={port_val} is not a common service port"))
+            elif port_val in {22, 23, 3389, 445}:
+                reasons.append(("Sensitive port targeted", f"{dst_port_col}={port_val} is commonly targeted"))
+        except Exception:
+            pass
+
+    for flag_col, label in [(syn_flag_col, "SYN flag burst"), (rst_flag_col, "RST flag activity")]:
+        if flag_col:
+            s = pd.to_numeric(reference_df[flag_col], errors="coerce")
+            val = pd.to_numeric(pd.Series([row.get(flag_col)]), errors="coerce").iloc[0]
+            if s.notna().sum() > 5 and pd.notna(val):
+                threshold = s.quantile(0.95)
+                if val >= threshold and val > 0:
+                    reasons.append((label, f"{flag_col}={val:.2f} exceeds 95th percentile"))
+
+    if not reasons:
+        reasons.append(("General anomalous traffic pattern", "The model flagged this flow, but no dominant heuristic signal stood out"))
+
+    top_reasons = reasons[:3]
+    short_text = "; ".join([r[0] for r in top_reasons])
+
+    return {
+        "top_reason": top_reasons[0][0],
+        "reason_details": " | ".join([f"{name}: {detail}" for name, detail in top_reasons]),
+        "explanation_text": short_text,
+    }
+
+
+def build_network_xai_table(original_df: pd.DataFrame, predictions, confidence_scores) -> pd.DataFrame:
+    """
+    Build an explainability table aligned with network predictions.
+    """
+    df = normalize_network_export_columns(original_df).reset_index(drop=True).copy()
+    n = min(len(df), len(predictions), len(confidence_scores))
+    df = df.iloc[:n].copy()
+
+    xai_rows = []
+    for i in range(n):
+        row = df.iloc[i]
+        explanation = explain_network_sample(row, df)
+
+        xai_rows.append({
+            "Sample_ID": i + 1,
+            "Prediction": str(predictions[i]),
+            "Confidence": float(confidence_scores[i]),
+            "Top_Reason": explanation["top_reason"],
+            "Explanation": explanation["explanation_text"],
+            "Reason_Details": explanation["reason_details"],
+        })
+
+    return pd.DataFrame(xai_rows)
+
+
+def build_login_xai_table(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build explainability table for login anomaly detection results.
+    """
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    xai_rows = []
+
+    for i, row in data.reset_index(drop=True).iterrows():
+        reasons = []
+
+        if row.get("anomaly") == "Anomaly":
+            login_count = row.get("login_count", 0)
+            hour = row.get("hour", None)
+
+            if pd.notna(login_count) and login_count >= 5:
+                reasons.append("Repeated login attempts")
+            if pd.notna(hour) and (hour < 6 or hour > 20):
+                reasons.append("Unusual login hour")
+
+            try:
+                user_rows = data[data["user"] == row["user"]]
+                top_pcs = user_rows["pc"].value_counts().head(2).index.tolist()
+                if row.get("pc") not in top_pcs:
+                    reasons.append("Unusual workstation for user")
+            except Exception:
+                pass
+
+            if not reasons:
+                reasons.append("General abnormal login behaviour")
+        else:
+            reasons.append("Login pattern appears normal")
+
+        xai_rows.append({
+            "Sample_ID": i + 1,
+            "User": row.get("user", "N/A"),
+            "PC": row.get("pc", "N/A"),
+            "Prediction": row.get("anomaly", "Unknown"),
+            "Top_Reason": reasons[0],
+            "Explanation": "; ".join(reasons[:3]),
+            "Reason_Details": row.get("reason", "-"),
+        })
+
+    return pd.DataFrame(xai_rows)
+
+
+# ============================================================
 # RESULT VISUALS / TABLES
 # ============================================================
 
@@ -726,6 +917,38 @@ def process_network_data(data: pd.DataFrame, predictor):
         display_detailed_results(results, "anomaly")
 
         st.markdown("---")
+        st.subheader("🧠 Explainable AI Layer - Network Anomaly Detection")
+
+        anomaly_predictions = results.get("predictions", [])
+        anomaly_confidence = results.get("confidence_scores", [])
+
+        if anomaly_predictions:
+            network_xai_df = build_network_xai_table(data, anomaly_predictions, anomaly_confidence)
+            attack_xai_df = network_xai_df[network_xai_df["Prediction"] == "Attack"]
+
+            if not attack_xai_df.empty:
+                st.markdown("**Top explanations for samples flagged as attacks**")
+                safe_st_dataframe(
+                    attack_xai_df[["Sample_ID", "Prediction", "Confidence", "Top_Reason", "Explanation"]].head(20)
+                )
+            else:
+                st.info("No attack samples available for network XAI display.")
+
+            with st.expander("🔎 Detailed network explanation table"):
+                safe_st_dataframe(network_xai_df.head(50))
+
+            st.markdown("**Most common explanation signals**")
+            top_reason_counts = network_xai_df["Top_Reason"].value_counts().reset_index()
+            top_reason_counts.columns = ["Reason", "Count"]
+            fig_reason = px.bar(
+                top_reason_counts,
+                x="Reason",
+                y="Count",
+                title="Top Contributing Signals Across Samples"
+            )
+            st.plotly_chart(fig_reason, use_container_width=True)
+
+        st.markdown("---")
         st.subheader("🎯 Step 2: Attack Classification")
 
         if not st.session_state.sa_network_attack_completed:
@@ -752,6 +975,22 @@ def process_network_data(data: pd.DataFrame, predictor):
             create_metrics_dashboard(attack_results, "attack_type")
             create_visualizations(attack_results, "attack_type")
             display_detailed_results(attack_results, "attack_type")
+
+            st.markdown("---")
+            st.subheader("🧠 Explainable AI Layer - Attack Classification")
+
+            attack_predictions = attack_results.get("predictions", [])
+            attack_confidence = attack_results.get("confidence_scores", [])
+
+            if attack_predictions:
+                attack_xai_df = build_network_xai_table(data, attack_predictions, attack_confidence)
+
+                safe_st_dataframe(
+                    attack_xai_df[["Sample_ID", "Prediction", "Confidence", "Top_Reason", "Explanation"]].head(20)
+                )
+
+                with st.expander("🔎 Detailed attack classification explanation table"):
+                    safe_st_dataframe(attack_xai_df.head(50))
 
             st.markdown("---")
             st.subheader("💾 Export Network Analysis")
@@ -1241,6 +1480,33 @@ def display_login_results():
                         display_df[["timestamp", "user", "pc", "anomaly", "anomaly_score", "reason"]]
                     )
 
+        st.markdown("---")
+        st.subheader("🧠 Explainable AI Layer - Login Anomaly Detection")
+
+        login_xai_df = build_login_xai_table(data)
+        anomaly_xai_df = login_xai_df[login_xai_df["Prediction"] == "Anomaly"]
+
+        if not anomaly_xai_df.empty:
+            safe_st_dataframe(
+                anomaly_xai_df[["Sample_ID", "User", "PC", "Prediction", "Top_Reason", "Explanation"]].head(20)
+            )
+        else:
+            st.info("No anomalous login rows available for XAI display.")
+
+        with st.expander("🔎 Detailed login explanation table"):
+            safe_st_dataframe(login_xai_df.head(50))
+
+        st.markdown("**Most common login explanation signals**")
+        login_reason_counts = login_xai_df["Top_Reason"].value_counts().reset_index()
+        login_reason_counts.columns = ["Reason", "Count"]
+        fig_login_reason = px.bar(
+            login_reason_counts,
+            x="Reason",
+            y="Count",
+            title="Top Contributing Signals in Login Analysis"
+        )
+        st.plotly_chart(fig_login_reason, use_container_width=True)
+
         data_csv_string = data.to_csv(index=False)
         cached_charts = create_login_visualizations(data_csv_string)
 
@@ -1319,8 +1585,8 @@ def display_login_results():
 # ============================================================
 
 def render_security_agent():
-    inject_unified_ui_css()
     """Main unified dashboard application."""
+    inject_unified_ui_css()
     network_predictor = load_network_predictor()
     le_user, le_pc, login_model = load_login_models()
 
@@ -1329,12 +1595,13 @@ def render_security_agent():
 
     render_top_header(
         title="🛡️ Security Agent Console",
-        subtitle="AI-supported network and login anomaly analysis with visual triage, classification, and export-ready outputs.",
+        subtitle="AI-supported network and login anomaly analysis with visual triage, classification, export-ready outputs, and lightweight explainability.",
         chips=[
             "Network Detection",
             "Login Anomaly Detection",
             "Interactive Analytics",
             "SOC Workflow",
+            "XAI Enabled",
         ],
     )
 
@@ -1377,7 +1644,7 @@ def render_security_agent():
             "Classify",
             "Anomaly Detection",
             "Attack Classification",
-            "Export / Assist",
+            "XAI / Export",
         ]
         current_step = 0
         if st.session_state.get("sa_uploaded_data") is not None:
@@ -1401,7 +1668,7 @@ def render_security_agent():
             "Classify",
             "Login Anomaly Detection",
             "Review Results",
-            "Export",
+            "XAI / Export",
         ]
         current_step = 0
         if st.session_state.get("sa_uploaded_data") is not None:
@@ -1451,12 +1718,14 @@ def render_security_agent():
         **🌐 Network Traffic Analysis:**
         - Binary anomaly detection
         - Attack type classification
+        - Lightweight explainable AI
         - Real-time threat assessment
 
         **🔐 Login Anomaly Detection:**
         - Insider threat detection
         - Unusual login pattern analysis
         - User behavior anomaly scoring
+        - Human-readable anomaly reasoning
         """
         )
 
@@ -1575,7 +1844,7 @@ def render_security_agent():
     <div style="text-align: center; color: #94a3b8; padding: 2rem;">
         <p style="margin-bottom:0.35rem;">🛡️ <strong style="color:#e2e8f0;">Unified Cybersecurity Detection System</strong></p>
         <p style="margin-bottom:0.2rem;">AI-Powered Network Traffic Analysis & Insider Threat Detection</p>
-        <p>Built with Streamlit • Powered by Machine Learning & Gemini AI</p>
+        <p>Built with Streamlit • Powered by Machine Learning, Heuristic XAI & Gemini AI</p>
     </div>
     """,
         unsafe_allow_html=True,
@@ -1583,10 +1852,4 @@ def render_security_agent():
 
 
 if __name__ == "__main__":
-    st.set_page_config(
-        page_title="🛡️ Unified Security Dashboard",
-        page_icon="🛡️",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
     render_security_agent()
