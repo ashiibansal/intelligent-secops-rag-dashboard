@@ -19,6 +19,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from llm_router import generate_text_with_fallback, get_primary_provider, get_secondary_provider
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -266,8 +267,7 @@ def classify_file_type(df: pd.DataFrame, filename: str) -> str:
 
             Respond with only one word: "network" or "login"
             """
-            gemini = genai.GenerativeModel("gemini-1.5-flash")
-            response = gemini.generate_content(prompt).text.strip().lower()
+            response = generate_text_with_fallback(prompt).strip().lower()
 
             if "network" in response:
                 return "network"
@@ -813,7 +813,275 @@ def display_detailed_results(results: Dict, prediction_type: str):
             with col2:
                 st.metric("Highest Attack Confidence", f"{max_attack_confidence:.3f}")
 
+def render_network_chat_ui(analysis_context: str):
+    """Render a cleaner SOC-style chat UI using native Streamlit chat components."""
+    if "sa_network_messages" not in st.session_state:
+        st.session_state.sa_network_messages = []
 
+    st.markdown(
+        """
+        <style>
+        .sa-chat-shell {
+            border: 1px solid rgba(148, 163, 184, 0.14);
+            background: linear-gradient(180deg, rgba(8,15,30,0.96) 0%, rgba(3,7,18,0.98) 100%);
+            border-radius: 22px;
+            overflow: hidden;
+            box-shadow: 0 18px 45px rgba(0,0,0,0.28);
+            margin-top: 0.75rem;
+        }
+
+        .sa-chat-header {
+            padding: 18px 20px 14px 20px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+            background: linear-gradient(90deg, rgba(15,23,42,0.88) 0%, rgba(10,18,34,0.72) 100%);
+        }
+
+        .sa-chat-header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .sa-chat-title {
+            font-size: 1.14rem;
+            font-weight: 700;
+            color: #e2e8f0;
+            margin-bottom: 2px;
+        }
+
+        .sa-chat-subtitle {
+            color: #94a3b8;
+            font-size: 0.92rem;
+            line-height: 1.45;
+        }
+
+        .sa-chat-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(37, 99, 235, 0.12);
+            color: #bfdbfe;
+            border: 1px solid rgba(59, 130, 246, 0.24);
+            font-size: 0.8rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .sa-chat-actions {
+            padding: 12px 18px 4px 18px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+            background: rgba(2, 6, 23, 0.18);
+        }
+
+        .sa-chat-history {
+            padding: 12px 14px 8px 14px;
+            max-height: 470px;
+            overflow-y: auto;
+        }
+
+        .sa-chat-footer {
+            padding: 12px 18px 16px 18px;
+            border-top: 1px solid rgba(148, 163, 184, 0.10);
+            background: rgba(2, 6, 23, 0.42);
+        }
+
+        .sa-chat-tip {
+            color: #94a3b8;
+            font-size: 0.82rem;
+            margin-top: 8px;
+        }
+
+        .sa-empty-state {
+            border: 1px dashed rgba(148, 163, 184, 0.18);
+            border-radius: 16px;
+            padding: 14px 16px;
+            color: #cbd5e1;
+            background: rgba(15,23,42,0.45);
+            line-height: 1.6;
+            margin: 6px 0 10px 0;
+        }
+
+        div[data-testid="stChatMessage"] {
+            border-radius: 18px;
+            border: 1px solid rgba(148, 163, 184, 0.10);
+            background: rgba(15, 23, 42, 0.70);
+            padding: 0.25rem 0.4rem;
+            margin-bottom: 0.7rem;
+        }
+
+        div[data-testid="stChatMessage"] p,
+        div[data-testid="stChatMessage"] li {
+            line-height: 1.65;
+            font-size: 0.96rem;
+        }
+
+        div[data-testid="stChatInput"] {
+            margin-top: 0.4rem;
+        }
+
+        .sa-chip-note {
+            color: #64748b;
+            font-size: 0.78rem;
+            margin-top: 0.2rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div class="sa-chat-shell">
+            <div class="sa-chat-header">
+                <div class="sa-chat-header-row">
+                    <div>
+                        <div class="sa-chat-title">🤖 Network Security Assistant</div>
+                        <div class="sa-chat-subtitle">
+                            Ask about anomalies, attack types, prioritization, mitigations, or analyst next steps.
+                        </div>
+                    </div>
+                    <div class="sa-chat-badge">● Analysis Loaded</div>
+                </div>
+            </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Quick action row
+    st.markdown('<div class="sa-chat-actions">', unsafe_allow_html=True)
+    quick_cols = st.columns(5)
+    quick_prompts = [
+        ("Top risks", "Explain the top risks in this network analysis."),
+        ("Mitigations", "Suggest mitigation steps based on the current network analysis."),
+        ("Summarize", "Summarize the detected attacks and their likely impact."),
+        ("Prioritize", "Which incidents should I investigate first and why?"),
+        ("XAI", "Explain why the suspicious samples were flagged."),
+    ]
+
+    selected_prompt = None
+    for i, (label, prompt) in enumerate(quick_prompts):
+        if quick_cols[i].button(label, key=f"sa_qp_{i}", use_container_width=True):
+            selected_prompt = prompt
+
+    st.markdown(
+        '<div class="sa-chip-note">Quick prompts help keep answers grounded in the current analysis.</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Message area
+    st.markdown('<div class="sa-chat-history">', unsafe_allow_html=True)
+
+    if not st.session_state.sa_network_messages:
+        st.markdown(
+            """
+            <div class="sa-empty-state">
+                Try asking:
+                <br>• Which attack type looks most dangerous here?
+                <br>• What should I prioritize first?
+                <br>• Suggest containment actions for the top-risk traffic.
+                <br>• Explain why these samples were flagged.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    for message in st.session_state.sa_network_messages:
+        role = "assistant" if message["role"] == "bot" else "user"
+        avatar = "🤖" if role == "assistant" else "🧑"
+        with st.chat_message(role, avatar=avatar):
+            st.markdown(message["content"])
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Clear button row
+    st.markdown('<div class="sa-chat-footer">', unsafe_allow_html=True)
+    footer_cols = st.columns([5, 1])
+    with footer_cols[1]:
+        if st.button("🧹 Clear", use_container_width=True, key="sa_network_clear_btn_clean"):
+            st.session_state.sa_network_messages = []
+            st.rerun()
+
+    st.markdown(
+        """
+        <div class="sa-chat-tip">
+            Tip: ask focused questions like “Which attack is highest priority and why?” for stronger answers.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+    # Optional quick prompt submission
+    pending_prompt = selected_prompt if selected_prompt else None
+
+    # Native chat input
+    user_input = st.chat_input(
+        "Ask about network anomalies, attack types, prioritization, or mitigations...",
+        key="sa_network_chat_input_clean",
+    )
+
+    if pending_prompt:
+        user_input = pending_prompt
+
+    if user_input:
+        st.session_state.sa_network_messages.append({"role": "user", "content": user_input})
+
+        cybersecurity_keywords = [
+            "attack", "threat", "security", "anomaly", "malicious", "intrusion",
+            "vulnerability", "exploit", "malware", "breach", "network", "traffic",
+            "ddos", "dos", "sql injection", "brute force", "botnet", "infiltration",
+            "analysis", "detection", "classification", "confidence", "risk",
+            "suspicious", "benign", "mitigation", "defense", "protection",
+            "firewall", "ips", "ids", "siem", "incident", "response",
+            "priority", "severity", "xai", "port", "flow", "packet"
+        ]
+
+        is_cybersecurity = any(keyword in user_input.lower() for keyword in cybersecurity_keywords)
+
+        if not is_cybersecurity:
+            response = (
+                "🚫 I can only help with cybersecurity-related questions about your network analysis. "
+                "Ask about attacks, anomalies, prioritization, mitigations, or the current results."
+            )
+        else:
+            try:
+                system_prompt = """You are a cybersecurity expert assistant analyzing network traffic data.
+You MUST only answer questions related to cybersecurity, network security, threat analysis, and the provided analysis results.
+Ground your answer in the loaded analysis context whenever possible.
+Keep the tone analyst-friendly and concise.
+
+Prefer this structure when useful:
+### Assessment
+### Why it matters
+### Recommended action"""
+
+                user_prompt = f"""
+{system_prompt}
+
+Current Network Analysis Results:
+{analysis_context}
+
+User Question:
+{user_input}
+
+Respond with a cybersecurity-focused answer based on the analysis above.
+"""
+                response = generate_text_with_fallback(user_prompt)
+
+            except Exception as e:
+                response = f"⚠️ Sorry, I encountered an error: {str(e)}. Please try rephrasing your cybersecurity question."
+
+        st.session_state.sa_network_messages.append({"role": "bot", "content": response})
+
+        if len(st.session_state.sa_network_messages) > 20:
+            st.session_state.sa_network_messages = st.session_state.sa_network_messages[-20:]
+
+        st.rerun()
 # ============================================================
 # NETWORK FLOW
 # ============================================================
@@ -1145,10 +1413,6 @@ def process_network_data(data: pd.DataFrame, predictor):
 
         if GEMINI_AVAILABLE and GEMINI_API_CONFIGURED:
             st.markdown("---")
-            st.subheader("🤖 Network Security Assistant")
-
-            if "sa_network_messages" not in st.session_state:
-                st.session_state.sa_network_messages = []
 
             try:
                 anomaly_results = st.session_state.get("sa_network_anomaly_results", {})
@@ -1160,115 +1424,25 @@ def process_network_data(data: pd.DataFrame, predictor):
                 attack_confidence = attack_results.get("confidence_scores", [0])
 
                 analysis_context = f"""
-                Network Analysis Summary:
-                - Total samples analyzed: {len(anomaly_predictions)}
-                - Anomalies detected: {sum(1 for p in anomaly_predictions if p == 'Attack')}
-                - Benign traffic: {sum(1 for p in anomaly_predictions if p == 'Benign')}
-                - Attack types found: {', '.join(set(attack_predictions)) if attack_predictions else 'None'}
-                - Average anomaly confidence: {np.mean(anomaly_confidence):.3f}
-                - Average attack classification confidence: {np.mean(attack_confidence):.3f}
-                """
+Network Analysis Summary:
+- Total samples analyzed: {len(anomaly_predictions)}
+- Anomalies detected: {sum(1 for p in anomaly_predictions if p == 'Attack')}
+- Benign traffic: {sum(1 for p in anomaly_predictions if p == 'Benign')}
+- Attack types found: {', '.join(set(attack_predictions)) if attack_predictions else 'None'}
+- Average anomaly confidence: {np.mean(anomaly_confidence):.3f}
+- Average attack classification confidence: {np.mean(attack_confidence):.3f}
+"""
             except Exception:
                 analysis_context = "Network analysis data is not available yet. Please complete the analysis first."
 
-            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+            render_network_chat_ui(analysis_context)
 
-            welcome_msg = """
-            <div class="welcome-bubble">
-                <strong>🤖 Network Security Assistant</strong><br>
-                I can help you understand your network analysis results, explain attack types, and suggest security measures.
-            </div>
-            """
-            st.markdown(welcome_msg, unsafe_allow_html=True)
-
-            for message in st.session_state.sa_network_messages:
-                if message["role"] == "user":
-                    st.markdown(
-                        f'<div class="user-bubble">🧑 <strong>You:</strong><br>{message["content"]}</div><div class="clearfix"></div>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        f'<div class="bot-bubble">🤖 <strong>Assistant:</strong><br>{message["content"]}</div><div class="clearfix"></div>',
-                        unsafe_allow_html=True,
-                    )
-
-            st.markdown("</div>", unsafe_allow_html=True)
-            st.markdown('<div class="chat-input-container">', unsafe_allow_html=True)
-
-            col1, col2 = st.columns([5, 1])
-
-            with col1:
-                with st.form(key="sa_network_chat_form", clear_on_submit=True):
-                    user_input = st.text_input(
-                        "Message",
-                        placeholder="Ask about network security...",
-                        label_visibility="collapsed",
-                        key="sa_network_chat_input",
-                    )
-                    send_btn = st.form_submit_button("Send", use_container_width=True)
-
-            with col2:
-                if st.button("🧹 Clear", use_container_width=True, key="sa_network_clear_btn"):
-                    st.session_state.sa_network_messages = []
-                    st.rerun()
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            if send_btn and user_input:
-                st.session_state.sa_network_messages.append({"role": "user", "content": user_input})
-
-                cybersecurity_keywords = [
-                    "attack", "threat", "security", "anomaly", "malicious", "intrusion",
-                    "vulnerability", "exploit", "malware", "breach", "network", "traffic",
-                    "ddos", "dos", "sql injection", "brute force", "botnet", "infiltration",
-                    "analysis", "detection", "classification", "confidence", "risk",
-                    "suspicious", "benign", "mitigation", "defense", "protection",
-                    "firewall", "ips", "ids", "siem", "incident", "response",
-                ]
-
-                is_cybersecurity = any(keyword in user_input.lower() for keyword in cybersecurity_keywords)
-
-                if not is_cybersecurity:
-                    response = "🚫 I can only help with cybersecurity-related questions about your network analysis. Please ask about network security, attacks, anomalies, or the analysis results."
-                else:
-                    try:
-                        system_prompt = """You are a cybersecurity expert assistant analyzing network traffic data.
-                        You MUST only answer questions related to cybersecurity, network security, threat analysis, and the provided analysis results.
-                        Keep responses concise, professional, and actionable."""
-
-                        user_prompt = f"""
-                        {system_prompt}
-
-                        Current Network Analysis Results:
-                        {analysis_context}
-
-                        User Question: {user_input}
-
-                        Please provide a cybersecurity-focused response based on the analysis results above.
-                        """
-
-                        gemini = genai.GenerativeModel("gemini-1.5-flash")
-                        response = gemini.generate_content(user_prompt).text
-
-                    except Exception as e:
-                        response = f"⚠️ Sorry, I encountered an error: {str(e)}. Please try rephrasing your cybersecurity question."
-
-                st.session_state.sa_network_messages.append({"role": "bot", "content": response})
-
-                if len(st.session_state.sa_network_messages) > 20:
-                    st.session_state.sa_network_messages = st.session_state.sa_network_messages[-20:]
-
-                st.rerun()
         else:
             st.markdown("---")
             st.info(
                 "🔑 **AI Assistant Unavailable**: Add your Gemini API key in `.streamlit/secrets.toml` "
                 "to enable the cybersecurity chatbot for detailed analysis insights."
             )
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
 
 # ============================================================
 # LOGIN FLOW
@@ -1699,6 +1873,14 @@ def render_security_agent():
             if st.session_state.get("sa_uploaded_data") is not None
             else 0,
             "AI Assistant": "Enabled" if GEMINI_AVAILABLE and GEMINI_API_CONFIGURED else "Unavailable",
+        },
+    )
+    render_sidebar_context(
+        "LLM Routing",
+        {
+            "Primary": get_primary_provider(),
+            "Secondary": get_secondary_provider(),
+            "Fallback": "Enabled",
         },
     )
 

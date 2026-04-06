@@ -9,6 +9,7 @@ import boto3
 
 from dashboard import render_dashboard
 from security_agent.security_agent_page import render_security_agent
+from llm_router import generate_text_with_fallback, get_primary_provider, get_secondary_provider
 from vector_loader import load_vectorstore
 from ui_components import (
     inject_unified_ui_css,
@@ -28,30 +29,11 @@ def gemini_markdown_summary(prompt: str) -> str:
         if "api_calls_today" not in st.session_state:
             st.session_state.api_calls_today = 0
 
-        # Soft local warning only — do not block the request
-        if st.session_state.api_calls_today >= 45:
-            st.warning(
-                "High local Gemini usage detected in this session. "
-                "The app will still try the request if your actual Gemini project quota is available."
-            )
-
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(prompt)
-
         st.session_state.api_calls_today += 1
-        return response.text.strip()
+        return generate_text_with_fallback(prompt)
 
     except Exception as e:
-        err = str(e).lower()
-        if "quota" in err or "429" in err or "resource_exhausted" in err:
-            return (
-                "⚠️ **Gemini quota/rate limit reached** for the currently configured project. "
-                "If you changed API keys recently, make sure the new key belongs to a different project "
-                "or wait for quota reset."
-            )
-        if "api_key" in err or "permission" in err or "unauthenticated" in err:
-            return "⚠️ **API Key Error**: Please verify your Gemini API key in `.streamlit/secrets.toml`."
-        return f"⚠️ **API Error**: Unable to generate response. Error: {str(e)[:160]}..."
+        return f"⚠️ **LLM Error**: Unable to generate response. Error: {str(e)[:220]}..."
 
 
 def apply_containment_fix():
@@ -896,8 +878,7 @@ FORMATTING RULES:
                         Please provide a cybersecurity-focused response based on the analysis results above.
                         """
 
-                        gemini = genai.GenerativeModel("gemini-1.5-flash")
-                        response = gemini.generate_content(user_prompt).text
+                        response = generate_text_with_fallback(user_prompt)
 
                     except Exception as e:
                         response = f"⚠️ Sorry, I encountered an error: {str(e)}. Please try rephrasing your cybersecurity question."
